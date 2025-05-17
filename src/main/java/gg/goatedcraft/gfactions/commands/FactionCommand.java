@@ -61,7 +61,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                     handleOutpostSetHome(player, playerFaction, outpostIdentifier);
                     break;
                 case "home":
-                    handleOutpostHome(player, playerFaction, outpostIdentifier); // This was the missing method error
+                    handleOutpostHome(player, playerFaction, outpostIdentifier);
                     break;
                 case "delete":
                     handleOutpostDelete(player, playerFaction, outpostIdentifier);
@@ -183,7 +183,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
 
     private void sendPlayerHelp(Player player) {
         player.sendMessage(ChatColor.GOLD + "" + ChatColor.BOLD + "--- " + plugin.getName() + " Player Help ---");
-        player.sendMessage(ChatColor.YELLOW + "/f create <name>" + ChatColor.GRAY + " - Create a faction (claims current chunk, sets spawnblock).");
+        player.sendMessage(ChatColor.YELLOW + "/f create <name>" + ChatColor.GRAY + " - Create a faction (claims current chunk, sets faction home).");
         player.sendMessage(ChatColor.YELLOW + "/f list [page]" + ChatColor.GRAY + " - List all factions.");
         player.sendMessage(ChatColor.YELLOW + "/f who [faction]" + ChatColor.GRAY + " - Show faction info (alias: /f info).");
         player.sendMessage(ChatColor.YELLOW + "/f invite <player>" + ChatColor.GRAY + " - Invite (Owner/Admin, expires " + plugin.EXPIRATION_MEMBER_INVITE_MINUTES + "m).");
@@ -191,10 +191,10 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + "/f kick <player>" + ChatColor.GRAY + " - Kick member (Owner/Admin).");
         player.sendMessage(ChatColor.YELLOW + "/f leave" + ChatColor.GRAY + " - Leave your current faction.");
         player.sendMessage(ChatColor.YELLOW + "/f accept <faction>" + ChatColor.GRAY + " - Accept a faction member invite.");
-        player.sendMessage(ChatColor.YELLOW + "/f claim" + ChatColor.GRAY + " - Claim chunk (Owner/Admin, Cost: " + plugin.COST_CLAIM_CHUNK + "P, must be adjacent & connected to spawn/outpost).");
-        player.sendMessage(ChatColor.YELLOW + "/f unclaim" + ChatColor.GRAY + " - Unclaim current chunk (Owner/Admin, cannot unclaim main spawnblock chunk).");
-        player.sendMessage(ChatColor.YELLOW + "/f sethome" + ChatColor.GRAY + " - Set main faction spawnblock (Owner only, in claimed territory).");
-        player.sendMessage(ChatColor.YELLOW + "/f home [faction]" + ChatColor.GRAY + " - TP to main spawnblock (" + plugin.TELEPORT_WARMUP_SECONDS + "s warmup).");
+        player.sendMessage(ChatColor.YELLOW + "/f claim" + ChatColor.GRAY + " - Claim chunk (Owner/Admin, Cost: " + plugin.COST_CLAIM_CHUNK + "P, must be adjacent & connected to home/outpost).");
+        player.sendMessage(ChatColor.YELLOW + "/f unclaim" + ChatColor.GRAY + " - Unclaim current chunk (Owner/Admin, cannot unclaim main home chunk).");
+        player.sendMessage(ChatColor.YELLOW + "/f sethome" + ChatColor.GRAY + " - Set main faction home (Owner only, in claimed territory).");
+        player.sendMessage(ChatColor.YELLOW + "/f home [faction]" + ChatColor.GRAY + " - TP to main faction home (" + plugin.TELEPORT_WARMUP_SECONDS + "s warmup).");
         player.sendMessage(ChatColor.YELLOW + "/f outpost ..." + ChatColor.GRAY + " - Manage faction outposts (see /f outpost help).");
         player.sendMessage(ChatColor.YELLOW + "/f power" + ChatColor.GRAY + " - Show faction power/relations.");
         player.sendMessage(ChatColor.YELLOW + "/f promote <player>" + ChatColor.GRAY + " - Promote to Admin (Owner, Cost: " + plugin.COST_PROMOTE_MEMBER + "P).");
@@ -254,21 +254,17 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             }
         }
 
-        if (plugin.POWER_INITIAL < plugin.COST_CLAIM_CHUNK) {
-            player.sendMessage(ChatColor.RED + "The server's initial faction power ("+plugin.POWER_INITIAL+") is less than the cost to claim the first chunk ("+plugin.COST_CLAIM_CHUNK+"). Faction creation aborted. Contact an admin.");
-            return;
-        }
-
+        // Initial claim is now free. Faction is created with POWER_INITIAL.
         if (plugin.createFaction(player, name)) {
             Faction newFac = plugin.getFaction(name);
             if (newFac != null) {
-                player.sendMessage(ChatColor.GREEN + "Faction '" + ChatColor.AQUA + name + ChatColor.GREEN + "' created! Spawnblock set and chunk claimed. (Initial Claim Cost: " + plugin.COST_CLAIM_CHUNK + "P)");
+                player.sendMessage(ChatColor.GREEN + "Faction '" + ChatColor.AQUA + name + ChatColor.GREEN + "' created! Faction home set and chunk claimed.");
                 player.sendMessage(ChatColor.GREEN + "Current Power: " + newFac.getCurrentPower() + "/" + newFac.getMaxPower());
             } else {
                 player.sendMessage(ChatColor.RED + "Faction '" + name + "' was marked as created, but could not be retrieved. Please contact an admin.");
             }
         } else {
-            player.sendMessage(ChatColor.RED + "Could not create faction (name taken, in faction, not enough power for initial claim, or other issue).");
+            player.sendMessage(ChatColor.RED + "Could not create faction (name taken, in faction, or other issue).");
         }
     }
 
@@ -331,11 +327,12 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 (plugin.MAX_CLAIMS_PER_FACTION > 0 ? ChatColor.GRAY + "/" + plugin.MAX_CLAIMS_PER_FACTION : ""));
 
         Location homeLoc = targetFaction.getHomeLocation();
-        if (homeLoc != null && homeLoc.getWorld() != null && targetFaction.getSpawnBlockChunk() != null) {
-            player.sendMessage(ChatColor.YELLOW + "Spawnblock (Home): " + ChatColor.WHITE + homeLoc.getBlockX() + ", " + homeLoc.getBlockY() + ", " + homeLoc.getBlockZ() +
-                    " (" + homeLoc.getWorld().getName() + ") in Chunk: " + targetFaction.getSpawnBlockChunk().toStringShort());
+        ChunkWrapper homeChunk = targetFaction.getHomeChunk(); // Use new getter
+        if (homeLoc != null && homeLoc.getWorld() != null && homeChunk != null) {
+            player.sendMessage(ChatColor.YELLOW + "Faction Home: " + ChatColor.WHITE + homeLoc.getBlockX() + ", " + homeLoc.getBlockY() + ", " + homeLoc.getBlockZ() +
+                    " (" + homeLoc.getWorld().getName() + ") in Chunk: " + homeChunk.toStringShort());
         } else {
-            player.sendMessage(ChatColor.YELLOW + "Spawnblock (Home): " + ChatColor.GRAY + (targetFaction.getSpawnBlockChunk() != null ? "Chunk: " + targetFaction.getSpawnBlockChunk().toStringShort() + ChatColor.RED + " (Location invalid or world unloaded!)" : ChatColor.RED + "Not set/Chunk missing!"));
+            player.sendMessage(ChatColor.YELLOW + "Faction Home: " + ChatColor.GRAY + (homeChunk != null ? "Chunk: " + homeChunk.toStringShort() + ChatColor.RED + " (Location invalid or world unloaded!)" : ChatColor.RED + "Not set/Chunk missing!"));
         }
 
         if (!targetFaction.getOutposts().isEmpty()) {
@@ -562,7 +559,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
 
         if (!isOverclaim) {
             if (playerFaction.getClaimedChunks().isEmpty() && playerFaction.getOutposts().isEmpty()) {
-                player.sendMessage(ChatColor.RED + "Your faction has no land to claim adjacent to. Create an outpost or ensure your spawnblock is set.");
+                player.sendMessage(ChatColor.RED + "Your faction has no land to claim adjacent to. Create an outpost or ensure your faction home is set.");
                 return;
             }
             if (!playerFaction.isChunkAdjacentToExistingClaim(chunkWrapper)) {
@@ -570,7 +567,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 return;
             }
             if (!playerFaction.isConnectedToSpawnBlock(chunkWrapper, plugin)) {
-                player.sendMessage(ChatColor.RED + "This claim would not be connected to your faction's spawnblock or an outpost.");
+                player.sendMessage(ChatColor.RED + "This claim would not be connected to your faction's home or an outpost.");
                 return;
             }
         }
@@ -593,7 +590,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             }
             player.sendMessage(ChatColor.YELLOW + "Faction Power: " + playerFaction.getCurrentPower() + "/" + playerFaction.getMaxPower());
         } else {
-            player.sendMessage(ChatColor.RED + "Could not claim chunk. Check power, adjacency, connection to spawn, claim limits, or other restrictions.");
+            player.sendMessage(ChatColor.RED + "Could not claim chunk. Check power, adjacency, connection to home, claim limits, or other restrictions.");
         }
     }
 
@@ -610,8 +607,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(ChatColor.RED + "Your faction does not own this chunk, or it is unclaimed."); return;
         }
 
-        if (cw.equals(playerFaction.getSpawnBlockChunk())) {
-            player.sendMessage(ChatColor.RED + "You cannot unclaim your faction's main spawnblock chunk. Use /f sethome elsewhere first or disband.");
+        if (cw.equals(playerFaction.getHomeChunk())) {
+            player.sendMessage(ChatColor.RED + "You cannot unclaim your faction's main home chunk. Use /f sethome elsewhere first or disband.");
             return;
         }
 
@@ -625,24 +622,24 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
 
     private void handleSetHome(Player p, @Nullable Faction pf) {
         if (pf == null) { p.sendMessage(ChatColor.RED + "You are not in a faction."); return; }
-        if (!pf.isOwner(p.getUniqueId())) { p.sendMessage(ChatColor.RED + "Only the faction Owner can set the faction spawnblock (home)."); return; }
+        if (!pf.isOwner(p.getUniqueId())) { p.sendMessage(ChatColor.RED + "Only the faction Owner can set the faction home."); return; }
 
         Chunk currentChunk = p.getLocation().getChunk();
         ChunkWrapper homeChunkWrapper = new ChunkWrapper(currentChunk.getWorld().getName(), currentChunk.getX(), currentChunk.getZ());
 
         if (!pf.getClaimedChunks().contains(homeChunkWrapper)) {
-            p.sendMessage(ChatColor.RED + "You can only set your faction spawnblock inside your claimed territory."); return;
+            p.sendMessage(ChatColor.RED + "You can only set your faction home inside your claimed territory."); return;
         }
 
         Outpost existingOutpostInNewHomeChunk = pf.getOutpost(homeChunkWrapper);
         if (existingOutpostInNewHomeChunk != null) {
             pf.removeOutpost(homeChunkWrapper);
-            p.sendMessage(ChatColor.YELLOW + "The outpost in this chunk has been removed as it's now your main spawnblock.");
+            p.sendMessage(ChatColor.YELLOW + "The outpost in this chunk has been removed as it's now your main faction home.");
         }
 
         pf.setHomeLocation(p.getLocation());
-        p.sendMessage(ChatColor.GREEN + "Faction spawnblock (home) for '" + ChatColor.AQUA + pf.getName() + ChatColor.GREEN + "' has been set to your current location!");
-        plugin.notifyFaction(pf, ChatColor.AQUA + p.getName() + ChatColor.GREEN + " has updated the faction spawnblock (home).", p.getUniqueId());
+        p.sendMessage(ChatColor.GREEN + "Faction home for '" + ChatColor.AQUA + pf.getName() + ChatColor.GREEN + "' has been set to your current location!");
+        plugin.notifyFaction(pf, ChatColor.AQUA + p.getName() + ChatColor.GREEN + " has updated the faction home.", p.getUniqueId());
 
         if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()) {
             plugin.getDynmapManager().updateFactionClaimsVisual(pf);
@@ -654,40 +651,22 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         Location homeLoc;
         String homeTypeMsg;
 
-        if (isOutpostHomeCmd) { // This logic path is for /f outpost home
-            homeTypeMsg = "outpost home";
-            if (pf == null) { p.sendMessage(ChatColor.RED + "You are not in a faction to teleport to its " + homeTypeMsg + "."); return; }
-            targetFaction = pf;
-            if (pf.getOutposts().isEmpty()) { p.sendMessage(ChatColor.RED + "Your faction does not have any outposts set."); return; }
-
-            Outpost targetOutpost;
-            int outpostIndex = -1; // For user messages
-            if (targetFacNameArgument == null && pf.getOutposts().size() == 1) {
-                targetOutpost = pf.getOutposts().get(0);
-                outpostIndex = 0;
-            } else if (targetFacNameArgument != null) {
-                try {
-                    outpostIndex = Integer.parseInt(targetFacNameArgument) - 1;
-                    if (outpostIndex >= 0 && outpostIndex < pf.getOutposts().size()) {
-                        targetOutpost = pf.getOutposts().get(outpostIndex);
-                    } else {
-                        p.sendMessage(ChatColor.RED + "Invalid outpost ID. Use /f who to see outpost IDs (e.g., #1, #2)."); return;
-                    }
-                } catch (NumberFormatException e) {
-                    p.sendMessage(ChatColor.RED + "Invalid outpost ID format. Must be a number (e.g., 1, 2...)."); return;
-                }
+        if (isOutpostHomeCmd) {
+            homeTypeMsg = "outpost home"; // This case is handled by handleOutpostHome, called from the outpost subcommand block
+            // This specific call path (isOutpostHomeCmd = true) should ideally not be reached directly from the main /f home command.
+            // The main /f home command always has isOutpostHomeCmd = false.
+            // If it IS reached, it means there's a logic flaw in how subcommands are routed.
+            // For safety, redirect or show error if this path is hit incorrectly.
+            if (pf != null && !pf.getOutposts().isEmpty()) {
+                handleOutpostHome(p, pf, targetFacNameArgument); // Pass to the correct handler
+            } else if (pf != null) {
+                p.sendMessage(ChatColor.RED + "Your faction has no outposts. Use /f home for main faction home.");
             } else {
-                p.sendMessage(ChatColor.RED + "Your faction has multiple outposts. Please specify outpost ID: /f outpost home <id>"); return;
+                p.sendMessage(ChatColor.RED + "You are not in a faction.");
             }
-
-            homeLoc = targetOutpost.getOutpostSpawnLocation();
-            if (homeLoc == null || homeLoc.getWorld() == null) {
-                p.sendMessage(ChatColor.RED + "Your faction's outpost #" + (outpostIndex+1) + " spawn is invalid or its world is not loaded."); return;
-            }
-            homeTypeMsg = "outpost #"+(outpostIndex+1)+" home";
-
-        } else { // This logic path is for /f home [faction_name] (main home)
-            homeTypeMsg = "faction spawnblock (home)";
+            return;
+        } else { // Main faction home (/f home [other_faction_name])
+            homeTypeMsg = "faction home";
             if (targetFacNameArgument == null) {
                 if (pf == null) { p.sendMessage(ChatColor.RED + "You are not in a faction to teleport to its home."); return; }
                 targetFaction = pf;
@@ -798,18 +777,19 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    // This is the method that was reported as missing.
     private void handleOutpostHome(Player player, @Nullable Faction playerFaction, @Nullable String outpostIdentifier) {
-        // This method body is identical to the one in handleHome when isOutpostHomeCmd is true.
-        // It's called specifically by '/f outpost home'
-        if (playerFaction == null) { player.sendMessage(ChatColor.RED + "You are not in a faction to teleport to its outpost home."); return; }
+        if (playerFaction == null) {
+            player.sendMessage(ChatColor.RED + "You are not in a faction to teleport to its outpost home.");
+            return;
+        }
 
         if (playerFaction.getOutposts().isEmpty()) {
-            player.sendMessage(ChatColor.RED + "Your faction does not have any outposts set."); return;
+            player.sendMessage(ChatColor.RED + "Your faction does not have any outposts set.");
+            return;
         }
 
         Outpost targetOutpost;
-        int outpostIndex = -1; // For user messages
+        int outpostIndex = -1;
 
         if (outpostIdentifier == null && playerFaction.getOutposts().size() == 1) {
             targetOutpost = playerFaction.getOutposts().get(0);
@@ -820,22 +800,26 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 if (outpostIndex >= 0 && outpostIndex < playerFaction.getOutposts().size()) {
                     targetOutpost = playerFaction.getOutposts().get(outpostIndex);
                 } else {
-                    player.sendMessage(ChatColor.RED + "Invalid outpost ID. Use /f who to see outpost IDs (e.g., #1, #2)."); return;
+                    player.sendMessage(ChatColor.RED + "Invalid outpost ID. Use /f who to see outpost IDs (e.g., #1, #2).");
+                    return;
                 }
             } catch (NumberFormatException e) {
-                player.sendMessage(ChatColor.RED + "Invalid outpost ID format. Must be a number (e.g., 1, 2...)."); return;
+                player.sendMessage(ChatColor.RED + "Invalid outpost ID format. Must be a number (e.g., 1, 2...).");
+                return;
             }
-        } else { // No ID, multiple outposts exist
-            player.sendMessage(ChatColor.RED + "Your faction has multiple outposts. Please specify outpost ID: /f outpost home <id>"); return;
+        } else {
+            player.sendMessage(ChatColor.RED + "Your faction has multiple outposts. Please specify outpost ID: /f outpost home <id>");
+            return;
         }
 
         Location outpostHomeLoc = targetOutpost.getOutpostSpawnLocation();
         if (outpostHomeLoc == null || outpostHomeLoc.getWorld() == null) {
-            player.sendMessage(ChatColor.RED + "Your faction's outpost #" + (outpostIndex+1) + " spawn is invalid or its world is not loaded."); return;
+            player.sendMessage(ChatColor.RED + "Your faction's outpost #" + (outpostIndex + 1) + " spawn is invalid or its world is not loaded.");
+            return;
         }
-        String homeTypeMsg = "outpost #"+(outpostIndex+1)+" home";
+        String homeTypeMsg = "outpost #" + (outpostIndex + 1) + " home";
 
-        String successMsg = "Teleported to your " + homeTypeMsg + "!"; // Simplified for own outpost
+        String successMsg = "Teleported to your " + homeTypeMsg + "!";
         plugin.initiateTeleportWarmup(player, outpostHomeLoc, successMsg);
     }
 
