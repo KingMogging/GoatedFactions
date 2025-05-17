@@ -1,0 +1,39 @@
+name: GFactions
+version: ${project.version}
+main: gg.goatedcraft.gfactions.GFactionsPlugin
+api-version: '1.21' # Ensure this matches your server version (e.g., 1.20, 1.21)
+author: YourNameOrAlias
+description: A feature-rich faction plugin for Purpur servers.
+softdepend: [dynmap, Vault]
+
+commands:
+  faction:
+    aliases: [f, fac]
+    description: Main command for factions.
+    usage: "/<command> help for subcommands" # Updated usage
+  factionadmin:
+    aliases: [fa, facadmin]
+    description: Admin commands for GoatedFactions.
+    usage: /<command> <subcommand> [args]
+    permission: goatedfactions.admin # Moved permission here for base admin command
+
+permissions:
+  goatedfactions.use:
+    description: Allows basic use of faction commands.
+    default: true
+  goatedfactions.admin:
+    description: Allows admin control over factions and use of /fa commands.
+    default: op
+  goatedfactions.admin.bypass:
+    description: Allows bypassing faction build/interact protection.
+    default: op
+  goatedfactions.admin.bypassspawnprotection: # New
+    description: Allows claiming and creating factions near server spawn.
+    default: op
+  goatedfactions.admin.spy: # New
+    description: Allows seeing faction-only chat messages.
+    default: op
+  # Potentially add more specific permissions for outpost creation, etc., if desired
+  # goatedfactions.outpost.create:
+  #   description: Allows creating faction outposts.
+  #   default: true # Or op/specific rank

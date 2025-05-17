@@ -1,0 +1,74 @@
+# GoatedFactions Configuration (GFactions)
+
+# Power System Settings
+power:
+  initial: 100             # Power a new faction (owner) starts with
+  per_member_bonus: 100    # Max power increase per member (including owner)
+  regeneration_amount: 1   # Power regenerated per interval
+  regeneration_interval_hours: 1 # How often power regenerates (in hours)
+  loss_on_death_by_enemy: 50
+  cost:
+    claim_chunk: 5
+    overclaim_chunk: 20       # Default cost for overclaiming
+    declare_enemy: 10
+    declare_neutral: 10
+    send_ally_request: 10
+    promote_member: 2
+    trust_player: 1
+    create_outpost: 50        # Cost to create an outpost
+
+# Cooldowns & Expirations
+cooldowns:
+  enemy_neutral_declaration_hours: 24 # Cooldown before an enemy can be made neutral
+  member_invite_expiration_minutes: 5
+  ally_request_expiration_minutes: 5
+
+# Teleportation Settings
+teleport:
+  warmup_seconds: 5
+
+# Title Display Settings (when entering claims)
+titles:
+  fade_in_ticks: 5
+  stay_ticks: 30
+  fade_out_ticks: 5
+  display_cooldown_seconds: 1 # Reduced to allow quicker overwrite for new areas
+
+# Dynmap Integration Settings
+dynmap:
+  enabled: true
+  markerset_label: "Faction Claims"
+  style:
+    stroke_weight: 2          # Weight of the claim border line
+    stroke_opacity: 0.80      # Opacity of the border line
+    stroke_color: "0x000000"  # Color of border line (black, hex string), used for merged polygons
+    fill_opacity: 0.35        # Opacity of the claim fill
+    default_claim_color: "0x00FF00" # Green (as hex string) - Used for player's own faction fill
+    enemy_claim_color: "0xFF0000"   # Red - Used for enemy faction fill
+    ally_claim_color: "0x00FFFF"    # Cyan - Used for ally faction fill
+    neutral_claim_color: "0xFFFF00" # Yellow - Used for neutral faction fill (if not self, ally, or enemy)
+  # update_interval_seconds: 300 # How often to refresh all claims (optional, if needed for performance)
+
+# Faction Settings
+faction_details:
+  name_min_length: 3
+  name_max_length: 16
+  name_regex: "^[a-zA-Z0-9_]+$" # Allows letters, numbers, underscore
+  max_outposts: 1                 # Maximum number of outposts a faction can have
+  faction_chat_format: "&8[&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}" # Chat format
+
+# Claiming Restrictions
+claiming:
+  max_claims_per_faction: 0          # 0 for unlimited
+  max_members_per_faction: 0         # 0 for unlimited (excluding owner)
+  prevent_claim_near_spawn: true
+  spawn_protection_radius: 50      # Radius in blocks around server spawn (world spawn) where claiming is prevented
+
+# Messages (can be expanded)
+messages:
+  entering_wilderness: "&7Now entering Wilderness"
+  entering_faction_territory: "&7Now entering {FACTION_RELATION_COLOR}{FACTION_NAME}" # {FACTION_RELATION_COLOR} will be replaced dynamically
+
+factions: {} # Data will be stored here
+pendingAllyRequests: {}
+pendingMemberInvites: {}
