@@ -12,7 +12,8 @@ import org.dynmap.DynmapAPI;
 import org.dynmap.markers.AreaMarker;
 import org.dynmap.markers.MarkerAPI;
 import org.dynmap.markers.MarkerSet;
-import org.bukkit.ChatColor; // Keep for now
+import org.bukkit.ChatColor;
+import org.jetbrains.annotations.Nullable; // Added import for @Nullable
 
 import java.util.*;
 import java.util.logging.Level;
@@ -27,7 +28,8 @@ public class DynmapManager {
     private MarkerSet factionMarkerSet;
     private boolean enabled = false;
     private final String MARKER_SET_ID = "goatedfactions.markerset";
-    private final Map<String, List<AreaMarker>> factionAreaMarkers = new HashMap<>(); // FactionNameKey -> List of its AreaMarkers
+    private final Map<String, List<String>> factionMarkerIds = new HashMap<>();
+
 
     public DynmapManager(GFactionsPlugin plugin) {
         this.plugin = plugin;
@@ -64,7 +66,7 @@ public class DynmapManager {
             }
             this.enabled = true;
             plugin.getLogger().info("Hooked into Dynmap. MarkerSet: '" + plugin.DYNMAP_MARKERSET_LABEL + "'.");
-            updateAllFactionClaimsVisuals(); // Full redraw on activation
+            updateAllFactionClaimsVisuals();
         } catch (Exception e) {
             plugin.getLogger().log(Level.SEVERE, "Error activating Dynmap integration.", e);
             this.enabled = false;
@@ -73,38 +75,14 @@ public class DynmapManager {
 
     public void deactivate() {
         this.enabled = false;
-        if (factionMarkerSet != null) {
-            factionMarkerSet.deleteMarkerSet(); // Clean up the marker set
-            factionMarkerSet = null;
-        }
-        factionAreaMarkers.clear();
+        // Do not delete marker set on disable, so it persists if plugin re-enables
+        factionMarkerIds.clear(); // Clear local tracking
         plugin.getLogger().info("Dynmap integration deactivated.");
     }
 
-    private String getFactionAreaMarkerId(String factionNameKey, int areaIndex) {
-        return "gfactions_area_" + factionNameKey.toLowerCase(Locale.ROOT) + "_" + areaIndex;
+    private String getFactionAreaMarkerId(String factionNameKey, String worldName, int areaIndex) {
+        return "gfactions_area_" + factionNameKey.toLowerCase(Locale.ROOT) + "_" + worldName.toLowerCase(Locale.ROOT) + "_" + areaIndex;
     }
-
-    // Called when a single claim is added or removed
-    public void updateClaimOnMap(Faction faction, ChunkWrapper cwChanged) {
-        if (!enabled || factionMarkerSet == null || faction == null) return;
-        // For simplicity with merged polygons, just update the whole faction's visual
-        updateFactionClaimsVisual(faction);
-    }
-
-    // Called when a single claim is removed
-    public void removeClaimFromMap(ChunkWrapper cwRemoved) {
-        if (!enabled || factionMarkerSet == null || cwRemoved == null) return;
-        // Need to find which faction owned it to update that faction's visuals
-        // This is tricky if the faction object is already gone or the claim is unassigned
-        // A full refresh or targeted refresh of potentially affected factions is safer.
-        // For now, let's assume a faction context is available or we do a broader refresh.
-        // A simpler way for remove: iterate all factions, check if this cw was theirs, then update.
-        // However, the call to removeClaimFromMap often comes *after* the claim is removed from the Faction object.
-        // So, it's better to call updateAllFactionClaimsVisuals() or update a specific faction if known.
-        // The GFactionsPlugin.unclaimChunkAdmin/Player should call updateFactionClaimsVisual for the affected faction.
-    }
-
 
     public void updateAllFactionClaimsVisuals() {
         if (!enabled || factionMarkerSet == null) {
@@ -113,9 +91,12 @@ public class DynmapManager {
         }
         plugin.getLogger().info("Updating all faction claims visuals on Dynmap...");
 
-        // Clear all existing markers from our set
-        factionMarkerSet.getAreaMarkers().forEach(AreaMarker::deleteMarker);
-        factionAreaMarkers.clear();
+        for (AreaMarker marker : new ArrayList<>(factionMarkerSet.getAreaMarkers())) {
+            if (marker.getMarkerID().startsWith("gfactions_area_")) {
+                marker.deleteMarker();
+            }
+        }
+        factionMarkerIds.clear();
 
         for (Faction faction : plugin.getFactionsByNameKey().values()) {
             updateFactionClaimsVisual(faction);
@@ -125,55 +106,57 @@ public class DynmapManager {
 
     public void updateFactionClaimsVisual(Faction faction) {
         if (!enabled || factionMarkerSet == null || faction == null) return;
+        plugin.getLogger().info("Updating Dynmap visuals for faction: " + faction.getName());
 
-        // 1. Remove old markers for this faction
-        List<AreaMarker> oldMarkers = factionAreaMarkers.remove(faction.getNameKey());
-        if (oldMarkers != null) {
-            for (AreaMarker oldMarker : oldMarkers) {
-                oldMarker.deleteMarker();
+        List<String> oldMarkerIdsForFaction = factionMarkerIds.remove(faction.getNameKey());
+        if (oldMarkerIdsForFaction != null) {
+            for (String markerId : oldMarkerIdsForFaction) {
+                AreaMarker oldMarker = factionMarkerSet.findAreaMarker(markerId);
+                if (oldMarker != null) {
+                    oldMarker.deleteMarker();
+                }
             }
         }
 
         Set<ChunkWrapper> claims = faction.getClaimedChunks();
         if (claims.isEmpty()) {
-            return; // No claims, nothing to draw
+            return;
         }
 
-        List<AreaMarker> newMarkersForFaction = new ArrayList<>();
-
-        // 2. Group claims into contiguous areas (per world)
-        Map<String, List<Set<ChunkWrapper>>> worldContiguousAreas = new HashMap<>();
+        List<String> newMarkerIdsForThisFaction = new ArrayList<>();
+        Map<String, Set<ChunkWrapper>> claimsByWorld = new HashMap<>();
         for (ChunkWrapper claim : claims) {
-            worldContiguousAreas.computeIfAbsent(claim.getWorldName(), k -> new ArrayList<>())
-                    .add(new HashSet<>(Collections.singletonList(claim))); // Initially, each claim is its own area
+            claimsByWorld.computeIfAbsent(claim.getWorldName(), k -> new HashSet<>()).add(claim);
         }
 
-        for (Map.Entry<String, List<Set<ChunkWrapper>>> worldEntry : worldContiguousAreas.entrySet()) {
+        for (Map.Entry<String, Set<ChunkWrapper>> worldEntry : claimsByWorld.entrySet()) {
             String worldName = worldEntry.getKey();
-            List<Set<ChunkWrapper>> areasInWorld = mergeContiguousChunks(new ArrayList<>(faction.getClaimedChunks().stream().filter(c -> c.getWorldName().equals(worldName)).collect(Collectors.toSet())));
+            Set<ChunkWrapper> claimsInWorld = worldEntry.getValue();
+            if (claimsInWorld.isEmpty()) continue;
+
+            List<Set<ChunkWrapper>> contiguousAreas = mergeContiguousChunks(new ArrayList<>(claimsInWorld));
+            // plugin.getLogger().info("Faction " + faction.getName() + " in world " + worldName + " has " + contiguousAreas.size() + " contiguous area(s).");
 
             int areaIndex = 0;
-            for (Set<ChunkWrapper> area : areasInWorld) {
+            for (Set<ChunkWrapper> area : contiguousAreas) {
                 if (area.isEmpty()) continue;
+                // plugin.getLogger().info("Processing area with " + area.size() + " chunks for " + faction.getName());
 
                 List<Point> polygonPoints = calculateOutline(area);
+
                 if (polygonPoints.isEmpty() || polygonPoints.size() < 3) {
-                    // Fallback for very small/problematic areas: draw individual chunks
-                    // This part is complex to get right for all cases, so a fallback can be useful.
-                    // For now, we'll assume calculateOutline works for valid areas.
-                    // If not, we might log an error or draw single chunk markers.
-                    plugin.getLogger().warning("Could not form valid polygon for area in " + faction.getName() + ", world " + worldName);
-                    // As a robust fallback, you could draw individual chunk markers here if polygon fails
-                    for(ChunkWrapper cw : area){
-                        drawIndividualChunkMarker(faction, cw, newMarkersForFaction, areaIndex++);
+                    plugin.getLogger().warning("Could not form valid polygon for an area in " + faction.getName() + ", world " + worldName + ". Area chunks: " + area.stream().map(ChunkWrapper::toStringShort).collect(Collectors.joining(", ")));
+                    for(ChunkWrapper cw_fallback : area){ // Fallback drawing individual chunks
+                        drawIndividualChunkMarker(faction, cw_fallback, newMarkerIdsForThisFaction, worldName, areaIndex++);
                     }
                     continue;
                 }
+                // plugin.getLogger().fine("Polygon points for " + faction.getName() + " area " + areaIndex + ": " + polygonPoints.stream().map(p -> "("+p.x+","+p.y+")").collect(Collectors.joining(" ")));
 
                 double[] xCorners = polygonPoints.stream().mapToDouble(p -> p.x).toArray();
-                double[] zCorners = polygonPoints.stream().mapToDouble(p -> p.y).toArray(); // Using y for z
+                double[] zCorners = polygonPoints.stream().mapToDouble(p -> p.y).toArray();
 
-                String markerId = getFactionAreaMarkerId(faction.getNameKey(), areaIndex++);
+                String markerId = getFactionAreaMarkerId(faction.getNameKey(), worldName, areaIndex++);
                 AreaMarker marker = factionMarkerSet.createAreaMarker(markerId, faction.getName(), false, worldName, xCorners, zCorners, false);
 
                 if (marker == null) {
@@ -181,118 +164,158 @@ public class DynmapManager {
                     continue;
                 }
 
-                int factionColor = getFactionDisplayColor(faction, null); // ViewingPlayer null for general view
+                int factionColor = getFactionDisplayColor(faction, null);
                 try {
                     marker.setFillStyle(plugin.DYNMAP_FILL_OPACITY, factionColor);
                     marker.setLineStyle(plugin.DYNMAP_STROKE_WEIGHT, plugin.DYNMAP_STROKE_OPACITY, getColorFromHexString(plugin.DYNMAP_STROKE_COLOR, 0x000000));
                 } catch (NumberFormatException e){
                     plugin.getLogger().warning("Error setting Dynmap marker style due to color format: " + e.getMessage());
-                    marker.setFillStyle(plugin.DYNMAP_FILL_OPACITY, 0x00FF00); // Default green
-                    marker.setLineStyle(plugin.DYNMAP_STROKE_WEIGHT, plugin.DYNMAP_STROKE_OPACITY, 0x000000); // Default black
+                    marker.setFillStyle(plugin.DYNMAP_FILL_OPACITY, 0x00FF00);
+                    marker.setLineStyle(plugin.DYNMAP_STROKE_WEIGHT, plugin.DYNMAP_STROKE_OPACITY, 0x000000);
                 }
 
                 marker.setDescription(generatePopupDescription(faction));
-                newMarkersForFaction.add(marker);
+                newMarkerIdsForThisFaction.add(markerId);
             }
         }
-        factionAreaMarkers.put(faction.getNameKey(), newMarkersForFaction);
+        if (!newMarkerIdsForThisFaction.isEmpty()) {
+            factionMarkerIds.put(faction.getNameKey(), newMarkerIdsForThisFaction);
+        }
     }
 
-    private void drawIndividualChunkMarker(Faction faction, ChunkWrapper cw, List<AreaMarker> markerList, int areaIndexOffset) {
-        World world = Bukkit.getWorld(cw.getWorldName());
-        if (world == null) return;
-
+    private void drawIndividualChunkMarker(Faction faction, ChunkWrapper cw, List<String> markerIdList, String worldName, int uniqueIdx) {
         double[] xCorners = {(double) cw.getX() * 16, (double) cw.getX() * 16 + 16, (double) cw.getX() * 16 + 16, (double) cw.getX() * 16};
         double[] zCorners = {(double) cw.getZ() * 16, (double) cw.getZ() * 16, (double) cw.getZ() * 16 + 16, (double) cw.getZ() * 16 + 16};
 
-        String markerId = getFactionAreaMarkerId(faction.getNameKey() + "_chunk_" + cw.getX() + "_" + cw.getZ(), areaIndexOffset);
-        AreaMarker marker = factionMarkerSet.createAreaMarker(markerId, faction.getName(), false, world.getName(), xCorners, zCorners, false);
+        String markerId = getFactionAreaMarkerId(faction.getNameKey() + "_fbck_" + cw.getX() + "_" + cw.getZ(), worldName, uniqueIdx); // Made ID more unique for fallback
+        AreaMarker marker = factionMarkerSet.findAreaMarker(markerId);
+        if (marker == null) {
+            marker = factionMarkerSet.createAreaMarker(markerId, faction.getName(), false, worldName, xCorners, zCorners, false);
+        } else {
+            marker.setCornerLocations(xCorners, zCorners);
+            marker.setLabel(faction.getName());
+        }
 
         if (marker == null) {
-            plugin.getLogger().warning("Failed to create individual Dynmap chunk marker: " + markerId);
+            plugin.getLogger().warning("Failed to create/update individual Dynmap chunk marker: " + markerId);
             return;
         }
 
         int factionColor = getFactionDisplayColor(faction, null);
         marker.setFillStyle(plugin.DYNMAP_FILL_OPACITY, factionColor);
-        marker.setLineStyle(plugin.DYNMAP_STROKE_WEIGHT, plugin.DYNMAP_STROKE_OPACITY, getColorFromHexString(plugin.DYNMAP_STROKE_COLOR, 0x000000));
-        marker.setDescription(generatePopupDescription(faction)); // Simplified description for individual chunk if needed
-        markerList.add(marker);
+        // Corrected line: DYNMAP_STROKE_WEIGHT is int, division by int 2 results in int.
+        marker.setLineStyle(plugin.DYNMAP_STROKE_WEIGHT / 2, plugin.DYNMAP_STROKE_OPACITY / 2.0, factionColor);
+        marker.setDescription(generatePopupDescription(faction));
+        markerIdList.add(markerId);
     }
 
-
-    private static class Point { int x, y; Point(int x, int y) { this.x = x; this.y = y; }}
-    private static class Edge { Point p1, p2; Edge(Point p1, Point p2) { this.p1 = p1; this.p2 = p2; }
-        @Override public boolean equals(Object o) { if (this == o) return true; if (o == null || getClass() != o.getClass()) return false; Edge edge = (Edge) o; return (Objects.equals(p1, edge.p1) && Objects.equals(p2, edge.p2)) || (Objects.equals(p1, edge.p2) && Objects.equals(p2, edge.p1)); }
-        @Override public int hashCode() { return Objects.hash(p1, p2) + Objects.hash(p2, p1); } // Ensure undirected hash
+    private static class Point {
+        int x, y;
+        Point(int x, int y) { this.x = x; this.y = y; }
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Point point = (Point) o;
+            return x == point.x && y == point.y;
+        }
+        @Override public int hashCode() { return Objects.hash(x, y); }
+        @Override public String toString() { return "(" + x + "," + y + ")"; }
     }
 
-    // Basic polygon outline calculation (this is non-trivial for complex shapes and holes)
-    // This version is a simplified approach for external boundary of a set of squares.
+    private static class Edge {
+        Point p1, p2;
+        Edge(Point p1, Point p2) { this.p1 = p1; this.p2 = p2; }
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Edge edge = (Edge) o;
+            return (p1.equals(edge.p1) && p2.equals(edge.p2)) || (p1.equals(edge.p2) && p2.equals(edge.p1));
+        }
+        @Override public int hashCode() {
+            return p1.hashCode() ^ p2.hashCode();
+        }
+        @Override public String toString() { return p1.toString() + " -> " + p2.toString(); }
+    }
+
     private List<Point> calculateOutline(Set<ChunkWrapper> areaChunks) {
         if (areaChunks.isEmpty()) return Collections.emptyList();
 
-        List<Edge> edges = new ArrayList<>();
+        Map<Edge, Integer> edgeCounts = new HashMap<>();
         for (ChunkWrapper cw : areaChunks) {
             int x = cw.getX() * 16;
             int z = cw.getZ() * 16;
-            Point p1 = new Point(x, z);          // Top-left
-            Point p2 = new Point(x + 16, z);      // Top-right
-            Point p3 = new Point(x + 16, z + 16);  // Bottom-right
-            Point p4 = new Point(x, z + 16);     // Bottom-left
+            Point pNW = new Point(x, z);
+            Point pNE = new Point(x + 16, z);
+            Point pSE = new Point(x + 16, z + 16);
+            Point pSW = new Point(x, z + 16);
 
-            edges.add(new Edge(p1, p2)); edges.add(new Edge(p2, p3));
-            edges.add(new Edge(p3, p4)); edges.add(new Edge(p4, p1));
+            Edge top = new Edge(pNW, pNE);
+            Edge right = new Edge(pNE, pSE);
+            Edge bottom = new Edge(pSW, pSE);
+            Edge left = new Edge(pNW, pSW);
+
+            edgeCounts.put(top, edgeCounts.getOrDefault(top, 0) + 1);
+            edgeCounts.put(right, edgeCounts.getOrDefault(right, 0) + 1);
+            edgeCounts.put(bottom, edgeCounts.getOrDefault(bottom, 0) + 1);
+            edgeCounts.put(left, edgeCounts.getOrDefault(left, 0) + 1);
         }
 
-        // Keep edges that appear only once (exterior edges)
         List<Edge> outlineEdges = new ArrayList<>();
-        Map<Edge, Integer> edgeCounts = new HashMap<>();
-        for (Edge e : edges) {
-            edgeCounts.put(e, edgeCounts.getOrDefault(e, 0) + 1);
-        }
         for (Map.Entry<Edge, Integer> entry : edgeCounts.entrySet()) {
             if (entry.getValue() == 1) {
                 outlineEdges.add(entry.getKey());
             }
         }
 
-        // Order points to form polygon (this is the very hard part for complex shapes)
-        // This simplistic ordering will only work for convex hull like shapes or simple rectangles.
-        // A proper solution involves graph traversal or more advanced geometric algorithms.
-        if (outlineEdges.isEmpty()) return Collections.emptyList();
+        if (outlineEdges.isEmpty()) {
+            // plugin.getLogger().fine("No outline edges found for area with " + areaChunks.size() + " chunks.");
+            return Collections.emptyList();
+        }
+        // plugin.getLogger().fine("Found " + outlineEdges.size() + " outline edges: " + outlineEdges);
 
         List<Point> orderedPoints = new ArrayList<>();
+        if (outlineEdges.isEmpty()) return orderedPoints;
+
         Edge currentEdge = outlineEdges.remove(0);
         orderedPoints.add(currentEdge.p1);
         Point currentPoint = currentEdge.p2;
         orderedPoints.add(currentPoint);
 
-        while (!outlineEdges.isEmpty() && orderedPoints.size() < edgeCounts.size() * 2) { // Safety break
+        int safetyBreak = outlineEdges.size() + 2;
+        while (!outlineEdges.isEmpty() && safetyBreak-- > 0) {
             boolean foundNext = false;
             for (int i = 0; i < outlineEdges.size(); i++) {
-                Edge nextPossibility = outlineEdges.get(i);
-                if (nextPossibility.p1.equals(currentPoint)) {
-                    currentPoint = nextPossibility.p2;
+                Edge nextPossibleEdge = outlineEdges.get(i);
+                if (nextPossibleEdge.p1.equals(currentPoint)) {
+                    currentPoint = nextPossibleEdge.p2;
                     orderedPoints.add(currentPoint);
                     outlineEdges.remove(i);
                     foundNext = true;
                     break;
-                } else if (nextPossibility.p2.equals(currentPoint)) {
-                    currentPoint = nextPossibility.p1;
+                } else if (nextPossibleEdge.p2.equals(currentPoint)) {
+                    currentPoint = nextPossibleEdge.p1;
                     orderedPoints.add(currentPoint);
                     outlineEdges.remove(i);
                     foundNext = true;
                     break;
                 }
             }
-            if (!foundNext) break; // Cannot find next connected edge, polygon might be disjointed or logic error
+            if (!foundNext) {
+                // plugin.getLogger().warning("Could not find next connected edge for outline. Points so far: " + orderedPoints + ". Remaining edges: " + outlineEdges);
+                break;
+            }
         }
+        // if (safetyBreak <= 0) plugin.getLogger().warning("Outline calculation hit safety break.");
 
-        // Remove last point if it's same as first (closed polygon for Dynmap)
         if (orderedPoints.size() > 1 && orderedPoints.get(0).equals(orderedPoints.get(orderedPoints.size() - 1))) {
             orderedPoints.remove(orderedPoints.size() - 1);
         }
+
+        if (orderedPoints.size() < 3) {
+            // plugin.getLogger().warning("Outline resulted in less than 3 points, cannot form an area: " + orderedPoints);
+            return Collections.emptyList();
+        }
+
         return orderedPoints;
     }
 
@@ -314,7 +337,6 @@ public class DynmapManager {
                 while (!queue.isEmpty()) {
                     ChunkWrapper current = queue.poll();
 
-                    // Check cardinal neighbors
                     int[] dX = {0, 0, 1, -1};
                     int[] dZ = {1, -1, 0, 0};
 
@@ -333,9 +355,8 @@ public class DynmapManager {
         return contiguousAreas;
     }
 
-
-    private int getFactionDisplayColor(Faction faction, Player viewingPlayer) {
-        if (faction == null) return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM; // Wilderness or unowned
+    private int getFactionDisplayColor(Faction faction, @Nullable Player viewingPlayer) { // @Nullable is now resolved
+        if (faction == null) return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM;
 
         if (viewingPlayer != null) {
             Faction viewerFaction = plugin.getFactionByPlayer(viewingPlayer.getUniqueId());
@@ -345,7 +366,6 @@ public class DynmapManager {
                 if (viewerFaction.isEnemy(faction.getNameKey())) return plugin.DYNMAP_COLOR_ENEMY_CLAIM;
             }
         }
-        // Default if no specific relation or no viewing player (e.g. neutral faction)
         return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM;
     }
 
@@ -392,31 +412,40 @@ public class DynmapManager {
 
     public void updateFactionRelations(Faction f1, Faction f2) {
         if (!enabled) return;
-        plugin.getLogger().info("Dynmap: Updating relations appearance for " + f1.getName() + " and " + f2.getName());
+        // plugin.getLogger().info("Dynmap: Updating relations appearance for " + f1.getName() + " and " + f2.getName());
         updateFactionClaimsVisual(f1);
         updateFactionClaimsVisual(f2);
     }
 
     public void updateFactionAppearance(Faction faction) {
         if (!enabled || factionMarkerSet == null || faction == null) return;
-        plugin.getLogger().info("Dynmap: Updating general appearance for " + faction.getName());
+        // plugin.getLogger().info("Dynmap: Updating general appearance for " + faction.getName());
         updateFactionClaimsVisual(faction);
     }
 
     public void addFactionToMap(Faction faction) {
         if (!enabled || faction == null) return;
-        plugin.getLogger().info("Dynmap: Faction " + faction.getName() + " registered. Claims will appear as they are made.");
-        updateFactionClaimsVisual(faction); // Draw initial claims if any (like spawnblock)
+        // plugin.getLogger().info("Dynmap: Faction " + faction.getName() + " registered. Initial claims will be drawn.");
+        updateFactionClaimsVisual(faction);
     }
 
-    public void removeFactionClaimsFromMap(Faction faction) { // Called on disband
+    public void removeFactionClaimsFromMap(Faction faction) {
         if (!enabled || factionMarkerSet == null || faction == null) return;
-        List<AreaMarker> markers = factionAreaMarkers.remove(faction.getNameKey());
-        if (markers != null) {
-            for (AreaMarker marker : markers) {
-                marker.deleteMarker();
+        List<String> markerIds = factionMarkerIds.remove(faction.getNameKey());
+        if (markerIds != null) {
+            for (String markerId : markerIds) {
+                AreaMarker marker = factionMarkerSet.findAreaMarker(markerId);
+                if (marker != null) {
+                    marker.deleteMarker();
+                }
             }
         }
-        plugin.getLogger().info("Dynmap: All visual claims removed from map for disbanded faction: " + faction.getName());
+        // plugin.getLogger().info("Dynmap: All visual claims removed from map for disbanded faction: " + faction.getName());
+    }
+
+    public void updateMapForUnclaim(Faction faction, ChunkWrapper unclaimedChunk) {
+        if (!enabled || faction == null || unclaimedChunk == null) return; // Added null check for unclaimedChunk
+        // plugin.getLogger().info("Dynmap: Updating map after unclaim of " + unclaimedChunk.toStringShort() + " by " + faction.getName());
+        updateFactionClaimsVisual(faction);
     }
 }

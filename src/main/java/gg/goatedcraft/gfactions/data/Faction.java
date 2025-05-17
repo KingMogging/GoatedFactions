@@ -8,51 +8,54 @@ import org.bukkit.Material;
 import org.bukkit.Chunk;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.entity.Player; // Added import for Player
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-@SuppressWarnings("deprecation")
+@SuppressWarnings("deprecation") // For OfflinePlayer methods
 public class Faction {
     private final String originalName;
     private final String nameKey;
     private UUID ownerUUID;
-    private final Map<UUID, FactionRank> members;
-    private final Set<ChunkWrapper> claimedChunks;
-    private Location homeLocation; // This is the main spawnblock location
-    private ChunkWrapper spawnBlockChunk; // Chunk containing the main homeLocation (spawnblock)
+    private final Map<UUID, FactionRank> members; // Should be Concurrent for thread safety if modified by async tasks
+    private final Set<ChunkWrapper> allClaimedChunks; // Should be Concurrent for thread safety
+    private Location homeLocation;
+    private ChunkWrapper homeChunk;
 
-    private final List<Outpost> outposts;
+    private final List<Outpost> outposts; // If modified concurrently, consider CopyOnWriteArrayList or synchronized access
 
     private int currentPower;
-    private final Set<String> enemyFactionKeys;
-    private final Set<String> allyFactionKeys;
-    private final Map<String, Long> enemyDeclareTimestamps;
-    private final Set<UUID> trustedPlayers;
-    private Inventory vault;
-    public static final int VAULT_SIZE = 27;
+    private final Set<String> enemyFactionKeys; // ConcurrentHashMap.newKeySet()
+    private final Set<String> allyFactionKeys;  // ConcurrentHashMap.newKeySet()
+    private final Map<String, Long> enemyDeclareTimestamps; // ConcurrentHashMap
+    private final Set<UUID> trustedPlayers; // ConcurrentHashMap.newKeySet()
+    private Inventory vault; // Bukkit inventories are generally not thread-safe for modification from async tasks
+    public static final int VAULT_SIZE = 27; // Example size, 3 rows
 
-    private transient GFactionsPlugin plugin;
+    private transient GFactionsPlugin plugin; // Marked transient for GSON if it were used, good practice
 
-    public Faction(String name, UUID ownerUUID, Location initialHomeLocation, GFactionsPlugin pluginInstance) {
+    public Faction(String name, UUID ownerUUID, @Nullable Location initialHomeLocation, GFactionsPlugin pluginInstance) {
         this.originalName = name;
         this.nameKey = name.toLowerCase();
         this.ownerUUID = ownerUUID;
-        this.plugin = pluginInstance;
+        this.plugin = pluginInstance; // Store plugin reference
 
+        // Initialize collections for concurrency if necessary, though many Bukkit operations are main-thread only
         this.members = new ConcurrentHashMap<>();
         this.members.put(ownerUUID, FactionRank.OWNER);
 
-        this.claimedChunks = new HashSet<>();
-        this.outposts = new ArrayList<>(); // Initialize outposts list
+        this.allClaimedChunks = ConcurrentHashMap.newKeySet(); // Use a concurrent set
+        this.outposts = new ArrayList<>(); // If modified by multiple threads, use CopyOnWriteArrayList or synchronized blocks
 
         if (initialHomeLocation != null && initialHomeLocation.getWorld() != null) {
-            setHomeLocation(initialHomeLocation); // This will also set spawnBlockChunk
-        } else if (pluginInstance != null) {
-            pluginInstance.getLogger().warning("Faction " + name + " created with null initialHomeLocation or world.");
+            setHomeLocation(initialHomeLocation); // This will also claim the home chunk
+        } else if (pluginInstance != null) { // Check pluginInstance, not this.plugin yet
+            pluginInstance.getLogger().warning("Faction " + name + " created with null initialHomeLocation or world. Home needs to be set.");
         }
 
 
@@ -60,36 +63,39 @@ public class Faction {
         this.allyFactionKeys = ConcurrentHashMap.newKeySet();
         this.enemyDeclareTimestamps = new ConcurrentHashMap<>();
         this.trustedPlayers = ConcurrentHashMap.newKeySet();
-        this.currentPower = (this.plugin != null) ? this.plugin.POWER_INITIAL : 100;
 
+        this.currentPower = (this.plugin != null) ? this.plugin.POWER_INITIAL : 100; // Use plugin reference if available
         this.vault = Bukkit.createInventory(null, VAULT_SIZE, ChatColor.DARK_AQUA + this.originalName + " Vault");
-        updatePowerOnMemberChangeAndLoad();
+        updatePowerOnMemberChangeAndLoad(); // Initial power calculation
     }
 
+    // Call this after deserialization or if the plugin instance wasn't available at construction
     public void lateInitPluginReference(GFactionsPlugin pluginInstance) {
         if (this.plugin == null) {
             this.plugin = pluginInstance;
-            if (this.currentPower == 100 && pluginInstance != null && pluginInstance.POWER_INITIAL != 100) {
+            // If currentPower was default and plugin has a different initial, update it
+            if (this.currentPower == 100 && pluginInstance != null && pluginInstance.POWER_INITIAL != 100 && members.size() == 1) {
                 this.currentPower = pluginInstance.POWER_INITIAL;
             }
-            // If homeLocation has a null world, try to re-fetch it
-            if (this.homeLocation != null && this.homeLocation.getWorld() == null && this.spawnBlockChunk != null) {
-                World world = Bukkit.getWorld(this.spawnBlockChunk.getWorldName());
+            // Re-validate home location world if it was null
+            if (this.homeLocation != null && this.homeLocation.getWorld() == null && this.homeChunk != null) {
+                World world = Bukkit.getWorld(this.homeChunk.getWorldName());
                 if (world != null) {
-                    this.homeLocation = new Location(world, this.homeLocation.getX(), this.homeLocation.getY(), this.homeLocation.getZ(), this.homeLocation.getYaw(), this.homeLocation.getPitch());
-                } else {
-                    plugin.getLogger().warning("Could not reload world for home location of faction " + getName());
+                    this.homeLocation.setWorld(world);
+                } else if (plugin != null) {
+                    plugin.getLogger().warning("Could not reload world for home location of faction " + getName() + ": " + this.homeChunk.getWorldName());
                 }
             }
-            for(Outpost outpost : outposts){ // Ensure outpost locations also get their worlds reloaded if needed
-                if(outpost.getOutpostSpawnLocation() != null && outpost.getOutpostSpawnLocation().getWorld() == null){
-                    World world = Bukkit.getWorld(outpost.getWorldName());
-                    if(world != null){
-                        outpost.setOutpostSpawnLocation(new Location(world, outpost.getOutpostSpawnLocation().getX(), outpost.getOutpostSpawnLocation().getY(), outpost.getOutpostSpawnLocation().getZ(), outpost.getOutpostSpawnLocation().getYaw(), outpost.getOutpostSpawnLocation().getPitch()));
-                    }
+            // Re-validate outpost locations and assign IDs
+            for(int i = 0; i < outposts.size(); i++){
+                Outpost outpost = outposts.get(i);
+                outpost.setOutpostID(i + 1); // Ensure IDs are sequential from 1
+                Location outpostSpawn = outpost.getOutpostSpawnLocation(); // This re-validates world
+                if (outpostSpawn == null && plugin != null) {
+                    plugin.getLogger().warning("Outpost " + outpost.getOutpostID() + " for faction " + getName() + " has an invalid spawn location (world not loaded).");
                 }
             }
-            updatePowerOnMemberChangeAndLoad();
+            updatePowerOnMemberChangeAndLoad(); // Recalculate power based on loaded members
         }
     }
 
@@ -99,29 +105,33 @@ public class Faction {
     public UUID getOwnerUUID() { return ownerUUID; }
     public Map<UUID, FactionRank> getMembers() { return Collections.unmodifiableMap(members); }
     public Set<UUID> getMemberUUIDsOnly() { return Collections.unmodifiableSet(members.keySet()); }
-    public FactionRank getRank(UUID playerUUID) { return members.getOrDefault(playerUUID, null); }
-    public Set<ChunkWrapper> getClaimedChunks() { return Collections.unmodifiableSet(claimedChunks); }
+    @Nullable public FactionRank getRank(UUID playerUUID) { return members.get(playerUUID); } // Can be null
 
-    public Location getHomeLocation() {
-        if (homeLocation != null && homeLocation.getWorld() == null && spawnBlockChunk != null) {
-            World world = Bukkit.getWorld(spawnBlockChunk.getWorldName());
+    public Set<ChunkWrapper> getClaimedChunks() {
+        return Collections.unmodifiableSet(allClaimedChunks);
+    }
+    // Used internally for modification during loading or direct faction operations
+    public Set<ChunkWrapper> getAllClaimedChunks_Modifiable() {
+        return allClaimedChunks;
+    }
+
+    @Nullable public Location getHomeLocation() {
+        if (homeLocation != null && homeLocation.getWorld() == null && homeChunk != null) {
+            World world = Bukkit.getWorld(homeChunk.getWorldName());
             if (world != null) {
                 homeLocation.setWorld(world);
             } else {
-                if(plugin != null) plugin.getLogger().severe("CRITICAL: World " + spawnBlockChunk.getWorldName() + " for faction " + getName() + "'s home is not loaded!");
-                return null; // Or handle this more gracefully
+                if(plugin != null) plugin.getLogger().severe("CRITICAL: World " + homeChunk.getWorldName() + " for faction " + getName() + "'s home is not loaded!");
+                return null; // World is not loaded, cannot provide valid location
             }
         }
         return homeLocation;
     }
-    public ChunkWrapper getSpawnBlockChunk() { return spawnBlockChunk; }
+    @Nullable public ChunkWrapper getHomeChunk() { return homeChunk; }
 
     public int getCurrentPower() { return currentPower; }
-
     public int getMaxPower() {
-        if (plugin == null) {
-            return Math.max(1, members.size()) * 100;
-        }
+        if (plugin == null) return Math.max(1, members.size()) * 100; // Fallback if plugin not set
         return Math.max(1, members.size()) * plugin.POWER_PER_MEMBER_BONUS;
     }
 
@@ -136,86 +146,100 @@ public class Faction {
     // --- Setters & Modifiers ---
     public void setOwnerUUID(UUID newOwnerUUID) {
         if (members.containsKey(this.ownerUUID) && !this.ownerUUID.equals(newOwnerUUID)) {
-            members.put(this.ownerUUID, FactionRank.ADMIN);
+            members.put(this.ownerUUID, FactionRank.ADMIN); // Demote old owner
         }
         this.ownerUUID = newOwnerUUID;
-        members.put(newOwnerUUID, FactionRank.OWNER);
+        members.put(newOwnerUUID, FactionRank.OWNER); // Set new owner
     }
 
-    public void setHomeLocation(Location homeLocation) {
-        this.homeLocation = homeLocation;
-        if (homeLocation != null && homeLocation.getWorld() != null) {
-            this.spawnBlockChunk = new ChunkWrapper(homeLocation.getWorld().getName(), homeLocation.getChunk().getX(), homeLocation.getChunk().getZ());
-            // Ensure the spawnblock chunk itself is considered claimed
-            if (!claimedChunks.contains(this.spawnBlockChunk)) {
-                addClaim(this.spawnBlockChunk); // Silently add if not already, though create/sethome commands should handle explicit claiming
-            }
+    public void setHomeLocation(@Nullable Location newHomeLocation) {
+        this.homeLocation = newHomeLocation;
+        if (newHomeLocation != null && newHomeLocation.getWorld() != null) {
+            this.homeChunk = new ChunkWrapper(newHomeLocation.getWorld().getName(), newHomeLocation.getChunk().getX(), newHomeLocation.getChunk().getZ());
+            this.allClaimedChunks.add(this.homeChunk); // Ensure home chunk is always claimed
         } else {
-            this.spawnBlockChunk = null;
-            if(plugin != null) plugin.getLogger().warning("Attempted to set home location with null world or location for faction: " + getName());
+            this.homeChunk = null; // Invalidate home chunk if location is null or world is null
+            if (plugin != null && newHomeLocation != null) { // Log only if an attempt was made with an invalid location
+                plugin.getLogger().warning("Attempted to set home for " + getName() + " with a null world. Home chunk invalidated.");
+            }
         }
     }
 
     public void relocateHomeToRandomClaim() {
         if (plugin == null) return;
-        Set<ChunkWrapper> otherClaims = new HashSet<>(claimedChunks);
-        if (spawnBlockChunk != null) {
-            otherClaims.remove(spawnBlockChunk); // Don't relocate to the chunk that was just lost (if it was spawn)
+        Set<ChunkWrapper> mainTerritoryClaims = new HashSet<>(allClaimedChunks);
+        if (homeChunk != null) { // Exclude current home if it exists
+            mainTerritoryClaims.remove(homeChunk);
+        }
+        for (Outpost outpost : outposts) { // Exclude all outpost-specific claims
+            mainTerritoryClaims.removeAll(outpost.getOutpostSpecificClaims());
         }
 
-        if (otherClaims.isEmpty()) {
-            plugin.getLogger().warning("Faction " + getName() + " lost its spawnblock chunk and has no other claims. Home cannot be relocated.");
+        if (mainTerritoryClaims.isEmpty()) { // No main territory left
+            if (!outposts.isEmpty()) { // Try to convert an outpost
+                Outpost firstOutpost = outposts.get(0); // Get the first one
+                Location outpostSpawn = firstOutpost.getOutpostSpawnLocation();
+                if (outpostSpawn != null && outpostSpawn.getWorld() != null) {
+                    setHomeLocation(outpostSpawn); // New home is the outpost spawn
+                    allClaimedChunks.removeAll(firstOutpost.getOutpostSpecificClaims()); // Remove old outpost claims from global list
+                    outposts.remove(firstOutpost); // Remove the outpost object
+                    // Re-ID remaining outposts
+                    for(int i=0; i<outposts.size(); i++){ outposts.get(i).setOutpostID(i+1); }
+
+                    plugin.getLogger().info("Faction " + getName() + " home relocated to former outpost at " + firstOutpost.getSpawnChunk().toStringShort());
+                    broadcastMessage(ChatColor.YELLOW + "Your faction's home was lost. Outpost #" + firstOutpost.getOutpostID() + " has become your new faction home.", null);
+                    return;
+                }
+            }
+            // No suitable land found at all
+            plugin.getLogger().warning("Faction " + getName() + " lost its home and has no other claims to relocate to.");
             this.homeLocation = null;
-            this.spawnBlockChunk = null;
-            // Potentially disband faction or mark as "homeless"
+            this.homeChunk = null;
+            broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "Your faction's home was lost and no land was found to relocate it! You MUST set a new home with /f sethome.", null);
             return;
         }
 
-        List<ChunkWrapper> possibleRelocationChunks = new ArrayList<>(otherClaims);
+        // Relocate to a random chunk in the main territory
+        List<ChunkWrapper> possibleRelocationChunks = new ArrayList<>(mainTerritoryClaims);
         Collections.shuffle(possibleRelocationChunks);
         ChunkWrapper newHomeChunkWrapper = possibleRelocationChunks.get(0);
-
         World world = Bukkit.getWorld(newHomeChunkWrapper.getWorldName());
         if (world == null) {
-            plugin.getLogger().severe("Failed to relocate home for " + getName() + ": World " + newHomeChunkWrapper.getWorldName() + " not loaded.");
-            this.homeLocation = null; // Or try another chunk
-            this.spawnBlockChunk = null;
+            if(plugin != null) plugin.getLogger().severe("Failed to relocate home for " + getName() + ": World " + newHomeChunkWrapper.getWorldName() + " not loaded for new home chunk.");
+            broadcastMessage(ChatColor.RED + "Critical error: Could not relocate faction home due to an unloaded world. Contact an admin.", null);
             return;
         }
+        Chunk newHomeSpigotChunk = world.getChunkAt(newHomeChunkWrapper.getX(), newHomeChunkWrapper.getZ()); // Ensure chunk is loaded by Bukkit
+        Location newHomeLoc = findSafeSurfaceLocation(newHomeSpigotChunk); // Find a safe spot in the chunk
 
-        Chunk newHomeChunk = world.getChunkAt(newHomeChunkWrapper.getX(), newHomeChunkWrapper.getZ());
-        Location newHomeLoc = findSafeSurfaceLocation(newHomeChunk);
-
-        if (newHomeLoc == null) {
-            // Fallback if safe spot not found, try center of chunk at a fixed Y or another chunk
-            newHomeLoc = new Location(world, newHomeChunkWrapper.getX() * 16 + 8, world.getHighestBlockYAt(newHomeChunkWrapper.getX() * 16 + 8, newHomeChunkWrapper.getZ() * 16 + 8) + 1, newHomeChunkWrapper.getZ() * 16 + 8);
-            if(world.getBlockAt(newHomeLoc).getType().isSolid() || world.getBlockAt(newHomeLoc.clone().add(0,-1,0)).getType() == Material.AIR){ // basic safety check
-                newHomeLoc = new Location(world, newHomeChunkWrapper.getX() * 16 + 8, 64, newHomeChunkWrapper.getZ() * 16 + 8); // absolute fallback
-            }
-        }
-
-        setHomeLocation(newHomeLoc);
-        plugin.getLogger().info("Faction " + getName() + "'s home (spawnblock) was relocated to chunk: " + newHomeChunkWrapper.toString());
-        plugin.notifyFaction(this, ChatColor.RED + "Your faction's spawnblock chunk was overclaimed! Your home has been randomly relocated within your territory.", null);
+        setHomeLocation(newHomeLoc); // This sets homeLocation and homeChunk, and adds to allClaimedChunks
+        plugin.getLogger().info("Faction " + getName() + "'s home relocated to chunk: " + newHomeChunkWrapper.toStringShort());
+        broadcastMessage(ChatColor.RED + "Your faction's home chunk was lost! Your home has been randomly relocated within your territory to " + newHomeChunkWrapper.toStringShort() + ".", null);
     }
 
+    @Nullable
     private Location findSafeSurfaceLocation(Chunk chunk) {
         World world = chunk.getWorld();
-        // Try a few random spots in the chunk for a safe surface location
         Random random = new Random();
-        for (int i = 0; i < 10; i++) { // Try 10 times
+        for (int i = 0; i < 10; i++) { // Try 10 random spots
             int x = chunk.getX() * 16 + random.nextInt(16);
             int z = chunk.getZ() * 16 + random.nextInt(16);
-            int y = world.getHighestBlockYAt(x, z) + 1;
-            Location loc = new Location(world, x + 0.5, y, z + 0.5);
-            // Basic safety check: non-solid block at feet, solid block below feet
-            if (!world.getBlockAt(loc).getType().isSolid() &&
-                    !world.getBlockAt(loc.clone().add(0,1,0)).getType().isSolid() && // space for head
-                    world.getBlockAt(loc.clone().add(0,-1,0)).getType().isSolid()) {
-                return loc;
+            // Get the highest solid block, then go one above.
+            Block highestBlock = world.getHighestBlockAt(x,z);
+            // Ensure highestBlock itself is not something like water or lava if possible, or that it's solid.
+            // For simplicity, we'll just go one above the block returned by getHighestBlockAt.
+            int y = highestBlock.getY() + 1;
+
+            Location loc = new Location(world, x + 0.5, y, z + 0.5); // Center of block
+            Block blockAtFeet = world.getBlockAt(loc);
+            Block blockAtHead = world.getBlockAt(loc.clone().add(0,1,0));
+            Block blockBelowFeet = world.getBlockAt(loc.clone().add(0,-1,0));
+
+            if (blockBelowFeet.getType().isSolid() && !blockAtFeet.getType().isSolid() && !blockAtHead.getType().isSolid()) {
+                return loc; // Safe spot found
             }
         }
-        // Fallback: center of chunk, highest block
+        // Fallback to chunk center, highest Y
         int cx = chunk.getX() * 16 + 8;
         int cz = chunk.getZ() * 16 + 8;
         return new Location(world, cx + 0.5, world.getHighestBlockYAt(cx, cz) + 1.0, cz + 0.5);
@@ -225,35 +249,41 @@ public class Faction {
     public void setCurrentPower(int power) {
         this.currentPower = Math.max(0, Math.min(power, getMaxPower()));
     }
-
     public void addPower(int amount) {
-        this.currentPower = Math.min(this.currentPower + amount, getMaxPower());
-        this.currentPower = Math.max(0, this.currentPower);
+        setCurrentPower(this.currentPower + amount);
     }
     public void removePower(int amount) {
-        this.currentPower = Math.max(0, this.currentPower - amount);
+        setCurrentPower(this.currentPower - amount);
     }
 
     public void updatePowerOnMemberChangeAndLoad() {
         int newMaxPower = getMaxPower();
+        // If it's a brand new faction (only owner) and power was default, set to configured initial
         if (plugin != null && members.size() == 1 && members.containsKey(ownerUUID) && members.get(ownerUUID) == FactionRank.OWNER) {
             this.currentPower = Math.min(plugin.POWER_INITIAL, newMaxPower);
-        } else {
+        } else { // Otherwise, just ensure current power doesn't exceed new max
             this.currentPower = Math.min(this.currentPower, newMaxPower);
         }
-        this.currentPower = Math.max(0, this.currentPower);
+        this.currentPower = Math.max(0, this.currentPower); // Ensure power is not negative
     }
 
     public boolean addMember(UUID memberUUID, FactionRank rank) {
-        if (members.containsKey(memberUUID)) return false;
-        if (plugin != null && plugin.MAX_MEMBERS_PER_FACTION > 0 && members.size() >= (plugin.MAX_MEMBERS_PER_FACTION + 1)) return false;
+        if (members.containsKey(memberUUID)) return false; // Already a member
+        if (plugin != null && plugin.MAX_MEMBERS_PER_FACTION > 0 && members.size() >= (plugin.MAX_MEMBERS_PER_FACTION)) {
+            // Faction is full (owner counts as 1, so max_members is for additional members)
+            // If MAX_MEMBERS_PER_FACTION is 10, total size can be 11 (1 owner + 10 members)
+            // So check against MAX_MEMBERS_PER_FACTION + 1 for total size limit.
+            // Or, if MAX_MEMBERS_PER_FACTION is total including owner, then check against MAX_MEMBERS_PER_FACTION.
+            // Assuming MAX_MEMBERS_PER_FACTION is total size limit for now.
+            if (members.size() >= plugin.MAX_MEMBERS_PER_FACTION) return false;
+        }
         members.put(memberUUID, rank);
         updatePowerOnMemberChangeAndLoad();
         return true;
     }
 
     public boolean removeMember(UUID memberUUID) {
-        if (memberUUID.equals(ownerUUID)) return false;
+        if (memberUUID.equals(ownerUUID)) return false; // Cannot remove owner this way
         if (members.remove(memberUUID) != null) {
             updatePowerOnMemberChangeAndLoad();
             return true;
@@ -262,107 +292,173 @@ public class Faction {
     }
 
     public boolean promotePlayer(UUID memberUUID) {
-        if (!members.containsKey(memberUUID) || members.get(memberUUID) == FactionRank.OWNER || members.get(memberUUID) == FactionRank.ADMIN) return false;
+        if (!members.containsKey(memberUUID) || members.get(memberUUID) == FactionRank.OWNER || members.get(memberUUID) == FactionRank.ADMIN) {
+            return false; // Not a member, or already owner/admin
+        }
         members.put(memberUUID, FactionRank.ADMIN);
         return true;
     }
+
     public boolean demotePlayer(UUID memberUUID) {
-        if (!members.containsKey(memberUUID) || members.get(memberUUID) != FactionRank.ADMIN) return false;
+        if (!members.containsKey(memberUUID) || members.get(memberUUID) != FactionRank.ADMIN) {
+            return false; // Not a member or not an admin
+        }
         members.put(memberUUID, FactionRank.MEMBER);
         return true;
     }
 
-    public void addClaim(ChunkWrapper chunkWrapper) { this.claimedChunks.add(chunkWrapper); }
-    public void removeClaim(ChunkWrapper chunkWrapper) {
-        this.claimedChunks.remove(chunkWrapper);
-        // If the removed chunk was the spawnblock chunk, relocate home
-        if (plugin != null && chunkWrapper.equals(this.spawnBlockChunk)) {
-            plugin.getLogger().info("Spawnblock chunk " + chunkWrapper + " for faction " + getName() + " is being unclaimed/lost. Relocating home...");
-            relocateHomeToRandomClaim();
+    public void addClaim(ChunkWrapper chunkWrapper, boolean isOutpostClaimHint, @Nullable Outpost specificOutpost) {
+        this.allClaimedChunks.add(chunkWrapper);
+        if (isOutpostClaimHint && specificOutpost != null && outposts.contains(specificOutpost)) {
+            specificOutpost.addClaim(chunkWrapper); // Add to outpost's specific list
         }
-        // If it was an outpost chunk, remove the outpost
-        Outpost removedOutpost = null;
-        for(Outpost outpost : outposts){
-            if(outpost.getChunkWrapper().equals(chunkWrapper)){
-                removedOutpost = outpost;
+        // Check for merge only if it's not an outpost-specific claim being added to an existing outpost.
+        // If it's a new outpost being created, or a general claim, then check for merge.
+        if (!isOutpostClaimHint || specificOutpost == null) {
+            checkForAndHandleTerritoryMerge();
+        }
+    }
+    public void addClaim(ChunkWrapper chunkWrapper) {
+        addClaim(chunkWrapper, false, null);
+    }
+
+    public void removeClaim(ChunkWrapper chunkWrapper) {
+        boolean removed = this.allClaimedChunks.remove(chunkWrapper);
+        if (!removed) return; // Not claimed by this faction overall
+
+        Outpost associatedOutpost = null;
+        for (Outpost outpost : outposts) {
+            if (outpost.containsClaim(chunkWrapper)) {
+                outpost.removeClaim(chunkWrapper);
+                associatedOutpost = outpost;
                 break;
             }
         }
-        if(removedOutpost != null){
-            outposts.remove(removedOutpost);
-            if(plugin != null) plugin.getLogger().info("Outpost at chunk " + chunkWrapper + " for faction " + getName() + " was lost.");
-            // Notify faction if desired
+
+        // Check if home chunk was lost
+        if (plugin != null && chunkWrapper.equals(this.homeChunk)) {
+            plugin.getLogger().info("Home chunk " + chunkWrapper.toStringShort() + " for faction " + getName() + " is being lost. Relocating home...");
+            relocateHomeToRandomClaim(); // This will find a new home or handle no land
         }
+        // Check if an outpost's spawn chunk was lost and if it should be disbanded
+        else if (associatedOutpost != null && chunkWrapper.equals(associatedOutpost.getSpawnChunk())) {
+            if (associatedOutpost.getOutpostSpecificClaims().isEmpty()) { // Last claim of this outpost
+                outposts.remove(associatedOutpost);
+                // Re-ID remaining outposts
+                for(int i=0; i<outposts.size(); i++){ outposts.get(i).setOutpostID(i+1); }
+                if (plugin != null) {
+                    plugin.getLogger().info("Outpost #" + associatedOutpost.getOutpostID() + " for " + getName() + " disbanded (last claim lost).");
+                    broadcastMessage(ChatColor.YELLOW + "Your outpost #" + associatedOutpost.getOutpostID() + " at " + chunkWrapper.toStringShort() + " was disbanded as its last claim was lost.", null);
+                }
+            } else { // Outpost lost its spawn but has other claims
+                if (plugin != null) {
+                    plugin.getLogger().warning("Outpost #" + associatedOutpost.getOutpostID() + " for " + getName() + " lost its spawn chunk but still has claims. It may be inaccessible until a new home is set for it or it merges.");
+                    broadcastMessage(ChatColor.RED + "Your outpost #" + associatedOutpost.getOutpostID() + " at " + chunkWrapper.toStringShort() + " lost its spawn chunk! It may be inaccessible. Consider deleting or re-establishing its home.", null);
+                }
+            }
+        }
+        checkForAndHandleTerritoryMerge(); // Check if unclaiming caused an outpost to become part of main land (less likely but possible if unclaiming a buffer)
     }
 
-    public boolean isConnectedToSpawnBlock(ChunkWrapper targetChunk, GFactionsPlugin plugin) {
-        if (spawnBlockChunk == null && outposts.isEmpty()) return false; // No spawn points to connect to
 
-        Set<ChunkWrapper> allSpawnChunks = new HashSet<>();
-        if (spawnBlockChunk != null) {
-            allSpawnChunks.add(spawnBlockChunk);
-        }
+    public boolean isConnectedToAnySpawnPoint(ChunkWrapper targetChunk) {
+        // This method checks if a target chunk is part of a contiguous territory
+        // that includes either the main faction home or any outpost spawn.
+        // Useful for commands like /f unclaim to prevent orphaning land.
+        if (allClaimedChunks.isEmpty()) return false;
+        if (targetChunk.equals(homeChunk)) return true; // Target is the home chunk itself
         for (Outpost outpost : outposts) {
-            allSpawnChunks.add(outpost.getChunkWrapper());
+            if (targetChunk.equals(outpost.getSpawnChunk())) return true; // Target is an outpost spawn itself
         }
-
-        if (allSpawnChunks.contains(targetChunk)) return true; // Target chunk is itself a spawn chunk
-
-        // Check adjacency to any existing claimed chunk that IS connected
-        // This can be done with a breadth-first or depth-first search from any spawn chunk
-        // within the faction's claimed territory.
 
         Queue<ChunkWrapper> queue = new LinkedList<>();
         Set<ChunkWrapper> visited = new HashSet<>();
 
-        // Start search from all spawn chunks
-        for(ChunkWrapper sc : allSpawnChunks){
-            if(claimedChunks.contains(sc)){ // only if the spawn chunk is actually claimed by this faction
-                queue.offer(sc);
-                visited.add(sc);
+        // Start BFS from all spawn points (home + outpost spawns)
+        if (homeChunk != null && allClaimedChunks.contains(homeChunk)) {
+            queue.offer(homeChunk);
+            visited.add(homeChunk);
+        }
+        for (Outpost outpost : outposts) {
+            ChunkWrapper outpostSpawn = outpost.getSpawnChunk();
+            // Ensure outpost spawn is actually claimed by this faction (should always be true if data is consistent)
+            if (allClaimedChunks.contains(outpostSpawn) && !visited.contains(outpostSpawn)) {
+                queue.offer(outpostSpawn);
+                visited.add(outpostSpawn);
             }
         }
-        if(queue.isEmpty() && !claimedChunks.isEmpty()){ // If no spawn chunk is currently claimed, but other claims exist, something is wrong.
-            // This state means claims exist but none are designated spawn or outpost.
-            // For the purpose of this check, if we are trying to claim *adjacent* to an existing disconnected claim,
-            // it should still fail if that existing claim isn't itself connected to a valid spawn.
-            // However, the initial claim of a spawn chunk itself should always be allowed.
-            // This logic mostly applies when *expanding* claims.
-            return false; // Cannot connect if no valid spawn point within claims.
+
+        if (queue.isEmpty() && !allClaimedChunks.isEmpty()) {
+            // This case means there are claims but no valid spawn points (home or outpost)
+            // which indicates a data inconsistency or a state where all spawns were lost.
+            // In such a scenario, any claim could be considered "connected" to itself if it's the only one.
+            // However, for unclaiming, we usually want to ensure it's connected to a *functional* part.
+            // For now, if no spawn points, assume not connected to a spawn.
+            return false;
         }
 
 
-        while(!queue.isEmpty()){
+        while (!queue.isEmpty()) {
             ChunkWrapper current = queue.poll();
+            if (current.equals(targetChunk)) return true; // Found the target chunk
 
-            // Check neighbors of 'current'
-            int[] dX = {0, 0, 1, -1};
-            int[] dZ = {1, -1, 0, 0};
+            // Check neighbors
+            int[] dX = {0, 0, 1, -1}; // dx for N, S, E, W
+            int[] dZ = {1, -1, 0, 0}; // dz for N, S, E, W
 
-            for(int i=0; i < 4; i++){
+            for (int i = 0; i < 4; i++) {
                 ChunkWrapper neighbor = new ChunkWrapper(current.getWorldName(), current.getX() + dX[i], current.getZ() + dZ[i]);
-                if(neighbor.equals(targetChunk)) return true; // Found a path to the target chunk
-
-                if(claimedChunks.contains(neighbor) && !visited.contains(neighbor)){
+                if (allClaimedChunks.contains(neighbor) && !visited.contains(neighbor)) {
                     visited.add(neighbor);
                     queue.offer(neighbor);
                 }
             }
         }
-        return false; // Target chunk is not connected to any spawn block chunk via claimed land
+        return false; // Target chunk not reached from any spawn point
     }
 
-    public boolean isChunkAdjacentToExistingClaim(ChunkWrapper targetChunk) {
-        if (claimedChunks.isEmpty()) { // First claim (spawnblock) doesn't need adjacency to itself
-            return true;
-        }
-        int[] dX = {0, 0, 1, -1, 1, 1, -1, -1}; // Include diagonals for simple check if needed, or restrict to cardinal
-        int[] dZ = {1, -1, 0, 0, 1, -1, 1, -1}; // Cardinal: first 4 pairs
 
-        for (ChunkWrapper claimed : claimedChunks) {
-            if (!claimed.getWorldName().equals(targetChunk.getWorldName())) continue;
-            for (int i = 0; i < 4; i++) { // Cardinal adjacency
+    public boolean isChunkAdjacentToExistingClaim(ChunkWrapper targetChunk) {
+        if (allClaimedChunks.isEmpty()) return true; // First claim is always "adjacent" to nothing
+
+        int[] dX = {0, 0, 1, -1};
+        int[] dZ = {1, -1, 0, 0};
+
+        for (ChunkWrapper claimed : allClaimedChunks) {
+            if (!claimed.getWorldName().equals(targetChunk.getWorldName())) continue; // Must be in the same world
+            for (int i = 0; i < 4; i++) {
                 if (claimed.getX() + dX[i] == targetChunk.getX() && claimed.getZ() + dZ[i] == targetChunk.getZ()) {
+                    return true; // Found an adjacent claimed chunk
+                }
+            }
+        }
+        return false; // No adjacent chunk found
+    }
+
+    @Nullable
+    public Outpost getAttachmentTerritory(ChunkWrapper newClaim) {
+        // If adjacent to main home territory, it's not attaching to an outpost (null)
+        if (homeChunk != null && isChunkAdjacentTo(newClaim, getClaimsConnectedTo(homeChunk))) {
+            return null;
+        }
+        // Check if adjacent to any existing outpost's territory
+        for (Outpost outpost : outposts) {
+            if (isChunkAdjacentTo(newClaim, outpost.getOutpostSpecificClaims())) {
+                return outpost; // Attaches to this outpost
+            }
+        }
+        return null; // Not adjacent to any existing territory (should be handled by isChunkAdjacentToExistingClaim for first claim)
+    }
+
+
+    public boolean isChunkAdjacentTo(ChunkWrapper target, Set<ChunkWrapper> territoryClaims) {
+        if (territoryClaims.isEmpty()) return false;
+        int[] dX = {0, 0, 1, -1};
+        int[] dZ = {1, -1, 0, 0};
+        for (ChunkWrapper claimed : territoryClaims) {
+            if (!claimed.getWorldName().equals(target.getWorldName())) continue;
+            for (int i = 0; i < 4; i++) {
+                if (claimed.getX() + dX[i] == target.getX() && claimed.getZ() + dZ[i] == target.getZ()) {
                     return true;
                 }
             }
@@ -370,102 +466,225 @@ public class Faction {
         return false;
     }
 
+    public Set<ChunkWrapper> getClaimsConnectedTo(ChunkWrapper startChunk) {
+        Set<ChunkWrapper> connected = new HashSet<>();
+        if (startChunk == null || !allClaimedChunks.contains(startChunk)) return connected; // Start chunk must be valid and claimed
 
+        Queue<ChunkWrapper> queue = new LinkedList<>();
+        Set<ChunkWrapper> visited = new HashSet<>(); // To avoid reprocessing and loops
+
+        queue.offer(startChunk);
+        visited.add(startChunk);
+        connected.add(startChunk);
+
+        while(!queue.isEmpty()){
+            ChunkWrapper current = queue.poll();
+            int[] dX = {0, 0, 1, -1};
+            int[] dZ = {1, -1, 0, 0};
+            for(int i=0; i < 4; i++){
+                ChunkWrapper neighbor = new ChunkWrapper(current.getWorldName(), current.getX() + dX[i], current.getZ() + dZ[i]);
+                if(allClaimedChunks.contains(neighbor) && !visited.contains(neighbor)){ // Must be claimed by this faction and not yet visited
+                    visited.add(neighbor);
+                    connected.add(neighbor);
+                    queue.offer(neighbor);
+                }
+            }
+        }
+        return connected;
+    }
+
+    public void checkForAndHandleTerritoryMerge() {
+        if (homeChunk == null || plugin == null) return; // Need a home and plugin instance
+
+        Set<ChunkWrapper> mainHomeTerritory = getClaimsConnectedTo(homeChunk);
+        // if (mainHomeTerritory.isEmpty() && homeChunk != null) { // Should not be empty if homeChunk is valid
+        //     mainHomeTerritory.add(homeChunk); // Ensure home chunk itself is part of its territory
+        // }
+
+        List<Outpost> outpostsToRemove = new ArrayList<>();
+        for (Outpost outpost : new ArrayList<>(outposts)) { // Iterate on a copy to allow modification
+            boolean merged = false;
+            // Check if any part of the outpost's specific claims is now adjacent to the main home territory
+            for (ChunkWrapper outpostClaim : new HashSet<>(outpost.getOutpostSpecificClaims())) { // Iterate on copy of claims
+                if (isChunkAdjacentTo(outpostClaim, mainHomeTerritory)) {
+                    merged = true;
+                    break;
+                }
+            }
+
+            if (merged) {
+                plugin.getLogger().info("Outpost " + (outpost.getOutpostID() > 0 ? "#"+outpost.getOutpostID() : outpost.getSpawnChunk().toStringShort()) + " for faction " + getName() + " has merged with main territory. Disbanding outpost and merging claims.");
+                broadcastMessage(ChatColor.GREEN + "Your outpost at " + outpost.getSpawnChunk().toStringShort() + " has connected to your main faction territory and has been merged!", null);
+
+                // The claims of the outpost are already in allClaimedChunks.
+                // We just need to remove the Outpost object itself.
+                outpostsToRemove.add(outpost);
+            }
+        }
+        if (!outpostsToRemove.isEmpty()) {
+            outposts.removeAll(outpostsToRemove);
+            // Re-ID remaining outposts
+            for(int i=0; i<outposts.size(); i++){
+                outposts.get(i).setOutpostID(i+1);
+            }
+        }
+    }
+
+
+    // --- Membership & Roles ---
     public boolean isOwner(UUID playerUUID) { return playerUUID.equals(this.ownerUUID); }
-    public boolean isAdmin(UUID playerUUID) { return members.getOrDefault(playerUUID, FactionRank.MEMBER) == FactionRank.ADMIN; }
+    public boolean isAdmin(UUID playerUUID) { return members.getOrDefault(playerUUID, FactionRank.MEMBER).ordinal() >= FactionRank.ADMIN.ordinal(); }
     public boolean isMemberOrHigher(UUID playerUUID) { return members.containsKey(playerUUID); }
     public int getTotalSize() { return members.size(); }
 
+    // --- Relations ---
     public boolean isEnemy(String otherFactionKey) { return enemyFactionKeys.contains(otherFactionKey.toLowerCase()); }
     public void addEnemy(String otherFactionKey, long timestamp) {
         String keyLC = otherFactionKey.toLowerCase();
-        removeAlly(keyLC);
+        removeAlly(keyLC); // Cannot be ally and enemy
         enemyFactionKeys.add(keyLC);
         enemyDeclareTimestamps.put(keyLC, timestamp);
     }
     public boolean removeEnemy(String otherFactionKey) {
         String keyLC = otherFactionKey.toLowerCase();
         boolean changed = enemyFactionKeys.remove(keyLC);
-        if (enemyDeclareTimestamps.remove(keyLC) != null) {
+        if (enemyDeclareTimestamps.remove(keyLC) != null) { // Remove timestamp too
             changed = true;
         }
         return changed;
     }
+
     public boolean isAlly(String otherFactionKey) { return allyFactionKeys.contains(otherFactionKey.toLowerCase()); }
     public void addAlly(String otherFactionKey) {
         String keyLC = otherFactionKey.toLowerCase();
-        if (isEnemy(keyLC)) return;
+        if (isEnemy(keyLC)) return; // Cannot be enemy and ally
         allyFactionKeys.add(keyLC);
     }
     public boolean removeAlly(String otherFactionKey) {
         return allyFactionKeys.remove(otherFactionKey.toLowerCase());
     }
+
+    // --- Trusted Players ---
     public boolean isTrusted(UUID playerUUID) { return trustedPlayers.contains(playerUUID); }
-    public boolean addTrusted(UUID playerUUID) { if (isMemberOrHigher(playerUUID)) return false; return trustedPlayers.add(playerUUID); }
+    public boolean addTrusted(UUID playerUUID) {
+        if (isMemberOrHigher(playerUUID)) return false; // Members are implicitly trusted
+        return trustedPlayers.add(playerUUID);
+    }
     public boolean removeTrusted(UUID playerUUID) { return trustedPlayers.remove(playerUUID); }
 
+    // --- Vault ---
     public void setVaultContents(ItemStack[] items) {
-        if (this.vault == null) this.vault = Bukkit.createInventory(null, VAULT_SIZE, ChatColor.DARK_AQUA + originalName + " Vault");
-        ItemStack[] contentsToSet = new ItemStack[VAULT_SIZE];
-        for (int i = 0; i < VAULT_SIZE; i++) contentsToSet[i] = (items != null && i < items.length) ? items[i] : null;
+        if (this.vault == null) { // Should be initialized in constructor
+            this.vault = Bukkit.createInventory(null, VAULT_SIZE, ChatColor.DARK_AQUA + originalName + " Vault");
+        }
+        // Ensure items array is not too large for vault
+        ItemStack[] contentsToSet = new ItemStack[Math.min(items.length, VAULT_SIZE)];
+        System.arraycopy(items, 0, contentsToSet, 0, contentsToSet.length);
         this.vault.setContents(contentsToSet);
     }
+
     public ItemStack[] getVaultContentsForSave() {
+        // Ensure vault is not null and return a copy of its contents up to VAULT_SIZE
+        if (this.vault == null) return new ItemStack[VAULT_SIZE]; // Return empty array of correct size
+
         ItemStack[] contents = new ItemStack[VAULT_SIZE];
-        if (this.vault != null) {
-            for (int i = 0; i < VAULT_SIZE && i < this.vault.getSize(); i++) {
-                contents[i] = this.vault.getItem(i);
-            }
+        for (int i = 0; i < VAULT_SIZE && i < this.vault.getSize(); i++) {
+            contents[i] = this.vault.getItem(i); // getItem handles nulls correctly
         }
         return contents;
     }
 
-    // --- Outpost Management ---
+    // --- Outposts ---
     public boolean addOutpost(Outpost outpost) {
-        if (plugin != null && outposts.size() >= plugin.MAX_OUTPOSTS_PER_FACTION && plugin.MAX_OUTPOSTS_PER_FACTION > 0) {
+        if (plugin != null && plugin.MAX_OUTPOSTS_PER_FACTION > 0 && outposts.size() >= plugin.MAX_OUTPOSTS_PER_FACTION) {
             return false; // Max outposts reached
         }
-        if (!outposts.contains(outpost)) { // Prevent duplicate outposts by chunk
+        if (!outposts.contains(outpost)) { // Prevent duplicates if equals/hashCode is based on location
             outposts.add(outpost);
-            claimedChunks.add(outpost.getChunkWrapper()); // The outpost chunk is also a claim
+            outpost.setOutpostID(outposts.size()); // Assign ID (1-based index)
+
+            // Ensure all claims of this new outpost (especially its spawn chunk) are in the faction's main claim list
+            allClaimedChunks.addAll(outpost.getOutpostSpecificClaims());
             return true;
         }
-        return false;
+        return false; // Already exists or other issue
     }
 
-    public boolean removeOutpost(ChunkWrapper outpostChunk) {
-        Outpost toRemove = null;
-        for (Outpost op : outposts) {
-            if (op.getChunkWrapper().equals(outpostChunk)) {
-                toRemove = op;
-                break;
+    public boolean removeOutpostAndItsClaims(Outpost outpostToRemove) {
+        if (outpostToRemove == null || !outposts.contains(outpostToRemove)) return false;
+
+        // Remove all specific claims of this outpost from the faction's global claim list
+        // and from the plugin's global claimedChunks map
+        if (plugin != null) {
+            for (ChunkWrapper cw : new HashSet<>(outpostToRemove.getOutpostSpecificClaims())) { // Iterate copy
+                allClaimedChunks.remove(cw);
+                plugin.getClaimedChunksMap().remove(cw); // Remove from GFactionsPlugin's map
+            }
+        } else { // Fallback if plugin ref is null (should not happen in normal operation)
+            allClaimedChunks.removeAll(outpostToRemove.getOutpostSpecificClaims());
+        }
+
+        boolean removed = outposts.remove(outpostToRemove);
+        if (removed) {
+            // Re-ID remaining outposts
+            for(int i=0; i<outposts.size(); i++){
+                outposts.get(i).setOutpostID(i+1);
             }
         }
-        if (toRemove != null) {
-            outposts.remove(toRemove);
-            // Note: The chunk itself is removed from claimedChunks via the general removeClaim method.
-            // This method is more for managing the 'Outpost' object list.
-            return true;
-        }
-        return false;
+        return removed;
     }
 
-    public Outpost getOutpost(ChunkWrapper chunk) {
+    @Nullable
+    public Outpost getOutpostById(int id) {
+        if (id <= 0 || id > outposts.size()) return null;
+        return outposts.get(id - 1); // List is 0-indexed, IDs are 1-indexed
+    }
+
+    @Nullable
+    public Outpost getOutpostBySpawnChunk(ChunkWrapper chunk) {
         for (Outpost outpost : outposts) {
-            if (outpost.getChunkWrapper().equals(chunk)) {
+            if (outpost.getSpawnChunk().equals(chunk)) {
                 return outpost;
             }
         }
         return null;
     }
 
-    public boolean isOutpostChunk(ChunkWrapper chunk) {
+    public boolean isOutpostChunk(ChunkWrapper chunk) { // Checks if the chunk is the *spawn* of any outpost
         for (Outpost outpost : outposts) {
-            if (outpost.getChunkWrapper().equals(chunk)) {
+            if (outpost.getSpawnChunk().equals(chunk)) {
                 return true;
             }
         }
         return false;
+    }
+
+    public boolean isChunkInOutpostTerritory(ChunkWrapper chunk) { // Checks if chunk is part of *any* outpost's claimed land
+        for (Outpost outpost : outposts) {
+            if (outpost.containsClaim(chunk)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Broadcasts a message to all online members of the faction.
+     *
+     * @param message The message to send.
+     * @param excludePlayerUUID The UUID of a player to exclude from the broadcast, or null.
+     */
+    public void broadcastMessage(String message, @Nullable UUID excludePlayerUUID) {
+        if (message == null || message.isEmpty()) return;
+        for (UUID memberUUID : members.keySet()) {
+            if (excludePlayerUUID != null && memberUUID.equals(excludePlayerUUID)) {
+                continue;
+            }
+            Player member = Bukkit.getPlayer(memberUUID);
+            if (member != null && member.isOnline()) {
+                member.sendMessage(message);
+            }
+        }
     }
 
 
@@ -473,8 +692,12 @@ public class Faction {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Faction faction = (Faction) o; return nameKey.equals(faction.nameKey);
+        Faction faction = (Faction) o;
+        return nameKey.equals(faction.nameKey); // Factions are unique by their nameKey
     }
+
     @Override
-    public int hashCode() { return Objects.hash(nameKey); }
+    public int hashCode() {
+        return Objects.hash(nameKey);
+    }
 }

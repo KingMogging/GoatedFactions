@@ -4,28 +4,39 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.Bukkit;
 
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.Map; // Added import
+import java.util.HashMap; // Added import
+import java.util.List; // Added import
 
 public class Outpost {
     private String worldName;
-    private int x; // Chunk X
-    private int z; // Chunk Z
-    private Location outpostSpawnLocation; // Specific spawn point within the outpost chunk
+    private int x;
+    private int z;
+    private Location outpostSpawnLocation;
+    private Set<ChunkWrapper> outpostSpecificClaims;
+    private transient int outpostID = -1;
 
-    // Constructor for a new outpost
-    public Outpost(Location outpostSpawnLocation) {
+    public Outpost(Location outpostSpawnLocation, ChunkWrapper initialClaim) {
         this.worldName = outpostSpawnLocation.getWorld().getName();
         this.x = outpostSpawnLocation.getChunk().getX();
         this.z = outpostSpawnLocation.getChunk().getZ();
         this.outpostSpawnLocation = outpostSpawnLocation;
+        this.outpostSpecificClaims = new HashSet<>();
+        if (initialClaim != null) {
+            this.outpostSpecificClaims.add(initialClaim);
+        }
     }
 
-    // Constructor for loading from config (adjust as needed for your serialization)
-    public Outpost(String worldName, int x, int z, Location outpostSpawnLocation) {
+    public Outpost(String worldName, int x, int z, Location outpostSpawnLocation, Set<ChunkWrapper> specificClaims) {
         this.worldName = worldName;
         this.x = x;
         this.z = z;
         this.outpostSpawnLocation = outpostSpawnLocation;
+        this.outpostSpecificClaims = new HashSet<>(specificClaims);
     }
 
     public String getWorldName() {
@@ -40,19 +51,17 @@ public class Outpost {
         return z;
     }
 
-    public ChunkWrapper getChunkWrapper() {
+    public ChunkWrapper getSpawnChunk() {
         return new ChunkWrapper(worldName, x, z);
     }
 
     public Location getOutpostSpawnLocation() {
-        // Ensure world is loaded, if not, try to load it or handle appropriately
         if (outpostSpawnLocation != null && outpostSpawnLocation.getWorld() == null) {
             World world = Bukkit.getWorld(worldName);
             if (world != null) {
                 this.outpostSpawnLocation = new Location(world, outpostSpawnLocation.getX(), outpostSpawnLocation.getY(), outpostSpawnLocation.getZ(), outpostSpawnLocation.getYaw(), outpostSpawnLocation.getPitch());
             } else {
-                // Consider logging a warning if world isn't loaded
-                return null; // Or throw an exception
+                return null;
             }
         }
         return outpostSpawnLocation;
@@ -60,7 +69,6 @@ public class Outpost {
 
     public void setOutpostSpawnLocation(Location outpostSpawnLocation) {
         this.outpostSpawnLocation = outpostSpawnLocation;
-        // Update worldName, x, z if the new location is in a different chunk (though typically sethome is within the same claimed chunk)
         if (outpostSpawnLocation != null && outpostSpawnLocation.getWorld() != null) {
             this.worldName = outpostSpawnLocation.getWorld().getName();
             this.x = outpostSpawnLocation.getChunk().getX();
@@ -68,41 +76,82 @@ public class Outpost {
         }
     }
 
-    // For saving to config - example string representation
-    public String serialize() {
-        if (outpostSpawnLocation == null || outpostSpawnLocation.getWorld() == null) return null;
-        return outpostSpawnLocation.getWorld().getName() + ";" +
-                outpostSpawnLocation.getX() + ";" +
-                outpostSpawnLocation.getY() + ";" +
-                outpostSpawnLocation.getZ() + ";" +
-                outpostSpawnLocation.getYaw() + ";" +
-                outpostSpawnLocation.getPitch() + ";" +
-                x + ";" + // Chunk X
-                z; // Chunk Z
+    public Set<ChunkWrapper> getOutpostSpecificClaims() {
+        return outpostSpecificClaims;
     }
 
-    // For loading from config - example
-    public static Outpost deserialize(String s) {
-        if (s == null || s.isEmpty()) return null;
-        String[] parts = s.split(";");
-        if (parts.length == 8) {
-            try {
-                World world = Bukkit.getWorld(parts[0]);
-                if (world == null) return null; // World not loaded
-                double locX = Double.parseDouble(parts[1]);
-                double locY = Double.parseDouble(parts[2]);
-                double locZ = Double.parseDouble(parts[3]);
-                float yaw = Float.parseFloat(parts[4]);
-                float pitch = Float.parseFloat(parts[5]);
-                int chunkX = Integer.parseInt(parts[6]);
-                int chunkZ = Integer.parseInt(parts[7]);
-                Location spawnLoc = new Location(world, locX, locY, locZ, yaw, pitch);
-                return new Outpost(parts[0], chunkX, chunkZ, spawnLoc);
-            } catch (NumberFormatException e) {
-                return null;
-            }
+    public void addClaim(ChunkWrapper claim) {
+        this.outpostSpecificClaims.add(claim);
+    }
+
+    public void removeClaim(ChunkWrapper claim) {
+        this.outpostSpecificClaims.remove(claim);
+    }
+
+    public boolean containsClaim(ChunkWrapper claim) {
+        return this.outpostSpecificClaims.contains(claim);
+    }
+
+    public void setOutpostID(int id) { this.outpostID = id; }
+    public int getOutpostID() { return this.outpostID; }
+
+    public Map<String, Object> serialize() {
+        Map<String, Object> map = new HashMap<>();
+        map.put("worldName", worldName);
+        map.put("x", x);
+        map.put("z", z);
+        if (outpostSpawnLocation != null && outpostSpawnLocation.getWorld() != null) {
+            map.put("spawnLocation.world", outpostSpawnLocation.getWorld().getName());
+            map.put("spawnLocation.x", outpostSpawnLocation.getX());
+            map.put("spawnLocation.y", outpostSpawnLocation.getY());
+            map.put("spawnLocation.z", outpostSpawnLocation.getZ());
+            map.put("spawnLocation.yaw", outpostSpawnLocation.getYaw());
+            map.put("spawnLocation.pitch", outpostSpawnLocation.getPitch());
         }
-        return null;
+        map.put("specificClaims", outpostSpecificClaims.stream().map(ChunkWrapper::toString).collect(Collectors.toList()));
+        return map;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Outpost deserialize(Map<String, Object> map) {
+        if (map == null) return null;
+        try {
+            String world = (String) map.get("worldName");
+            int chunkX = (int) map.get("x");
+            int chunkZ = (int) map.get("z");
+
+            Location spawnLoc = null;
+            if (map.containsKey("spawnLocation.world")) {
+                World spawnWorld = Bukkit.getWorld((String) map.get("spawnLocation.world"));
+                if (spawnWorld != null) {
+                    spawnLoc = new Location(
+                            spawnWorld,
+                            (double) map.get("spawnLocation.x"),
+                            (double) map.get("spawnLocation.y"),
+                            (double) map.get("spawnLocation.z"),
+                            ((Number) map.get("spawnLocation.yaw")).floatValue(),
+                            ((Number) map.get("spawnLocation.pitch")).floatValue()
+                    );
+                }
+            }
+
+            Set<ChunkWrapper> specificClaims = new HashSet<>();
+            List<String> claimStrings = (List<String>) map.get("specificClaims");
+            if (claimStrings != null) {
+                for (String s : claimStrings) {
+                    ChunkWrapper cw = ChunkWrapper.fromString(s);
+                    if (cw != null) specificClaims.add(cw);
+                }
+            }
+            if(spawnLoc != null) {
+                specificClaims.add(new ChunkWrapper(spawnLoc.getWorld().getName(), spawnLoc.getChunk().getX(), spawnLoc.getChunk().getZ()));
+            }
+
+            return new Outpost(world, chunkX, chunkZ, spawnLoc, specificClaims);
+        } catch (Exception e) {
+            Bukkit.getLogger().warning("[GFactions] Error deserializing outpost: " + e.getMessage());
+            return null;
+        }
     }
 
     @Override

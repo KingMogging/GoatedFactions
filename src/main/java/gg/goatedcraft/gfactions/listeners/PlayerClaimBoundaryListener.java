@@ -7,105 +7,119 @@ import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent; // Added for teleport handling
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.logging.Level;
 
 public class PlayerClaimBoundaryListener implements Listener {
 
     private final GFactionsPlugin plugin;
-    // Store the last displayed title string to allow for immediate overwrite
-    private final Map<UUID, String> playerLastDisplayedTitle = new HashMap<>();
-    private final Map<UUID, Long> playerTitleCooldown = new HashMap<>(); // Cooldown for sending *any* title again too quickly
+    private final Map<UUID, String> playerLastTerritoryId = new HashMap<>();
+    private final Map<UUID, Long> playerLastTitleTime = new HashMap<>();
+
 
     public PlayerClaimBoundaryListener(GFactionsPlugin plugin) {
         this.plugin = plugin;
     }
 
-    @EventHandler
-    public void onPlayerMove(PlayerMoveEvent event) {
-        Player player = event.getPlayer();
-        Location from = event.getFrom();
-        Location to = event.getTo();
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerMoveOrTeleport(PlayerMoveEvent event) { // Renamed to reflect it handles general movement
+        handlePlayerTerritoryChange(event.getPlayer(), event.getFrom(), event.getTo());
+    }
 
-        // Check if player actually moved between chunks
-        if (from.getChunk().getX() == to.getChunk().getX() &&
-                from.getChunk().getZ() == to.getChunk().getZ() &&
-                Objects.equals(from.getWorld(), to.getWorld())) {
-            return; // Still in the same chunk
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerTeleport(PlayerTeleportEvent event) { // Handle teleports explicitly too
+        handlePlayerTerritoryChange(event.getPlayer(), event.getFrom(), event.getTo());
+    }
+
+
+    private void handlePlayerTerritoryChange(Player player, Location from, Location to) {
+        if (to == null || from == null || to.getWorld() == null || from.getWorld() == null) return;
+
+        Chunk fromChunk = from.getChunk();
+        Chunk toChunk = to.getChunk();
+
+        // Only process if player actually moved to a new chunk
+        if (fromChunk.getX() == toChunk.getX() &&
+                fromChunk.getZ() == toChunk.getZ() &&
+                Objects.equals(fromChunk.getWorld(), toChunk.getWorld())) {
+            return;
         }
 
-        long currentTime = System.currentTimeMillis();
-        // Cooldown check: only allow a new title/message if cooldown has passed
-        if (playerTitleCooldown.getOrDefault(player.getUniqueId(), 0L) + (plugin.TITLE_DISPLAY_COOLDOWN_SECONDS * 1000L) > currentTime) {
-            // If we are on cooldown, but the *territory* changed, we might still want to send an update.
-            // The cooldown is more to prevent spam if they jitter on a border.
-            // For now, a simple cooldown. More complex logic could allow immediate update if territory *name* changes.
-        }
+        // plugin.getLogger().log(Level.FINER, "[PCBL] " + player.getName() + " moved to new chunk: " + toChunk.getX() + "," + toChunk.getZ());
 
-
-        Chunk currentChunk = to.getChunk();
-        String currentOwnerNameKey = plugin.getFactionOwningChunk(currentChunk);
+        String currentOwnerNameKey = plugin.getFactionOwningChunk(toChunk);
         Faction currentOwnerFaction = (currentOwnerNameKey != null) ? plugin.getFaction(currentOwnerNameKey) : null;
 
+        String currentTerritoryIdentifier;
         String displayTitle;
-        String chatMessage;
-        ChatColor titleColor;
-        String relationColorStr = ""; // For chat message placeholders
+        String chatMessage; // This will be the message sent in chat
+        ChatColor titleColor; // This will be the primary color for the title
+        String relationColorStr = ""; // For placeholder in chat message
 
         if (currentOwnerFaction != null) {
-            displayTitle = currentOwnerFaction.getName();
+            currentTerritoryIdentifier = "faction_" + currentOwnerFaction.getNameKey();
+            displayTitle = currentOwnerFaction.getName(); // Assume name is not null due to validation
             Faction playerFaction = plugin.getFactionByPlayer(player.getUniqueId());
 
             if (playerFaction != null) {
                 if (playerFaction.equals(currentOwnerFaction)) {
-                    titleColor = ChatColor.GREEN;
-                    relationColorStr = ChatColor.GREEN.toString();
+                    titleColor = ChatColor.GREEN; relationColorStr = ChatColor.GREEN.toString();
                 } else if (playerFaction.isAlly(currentOwnerFaction.getNameKey())) {
-                    titleColor = ChatColor.AQUA;
-                    relationColorStr = ChatColor.AQUA.toString();
+                    titleColor = ChatColor.AQUA; relationColorStr = ChatColor.AQUA.toString();
                 } else if (playerFaction.isEnemy(currentOwnerFaction.getNameKey())) {
-                    titleColor = ChatColor.RED;
-                    relationColorStr = ChatColor.RED.toString();
+                    titleColor = ChatColor.RED; relationColorStr = ChatColor.RED.toString();
                 } else { // Neutral
-                    titleColor = ChatColor.YELLOW;
-                    relationColorStr = ChatColor.YELLOW.toString();
+                    titleColor = ChatColor.YELLOW; relationColorStr = ChatColor.YELLOW.toString();
                 }
             } else { // Player is factionless
-                titleColor = ChatColor.YELLOW; // Neutral color for factionless players viewing others' land
-                relationColorStr = ChatColor.YELLOW.toString();
+                titleColor = ChatColor.YELLOW; relationColorStr = ChatColor.YELLOW.toString(); // Neutral view
             }
+            // Construct the message for entering faction territory
             chatMessage = plugin.MESSAGE_ENTERING_FACTION_TERRITORY
-                    .replace("{FACTION_NAME}", currentOwnerFaction.getName())
+                    .replace("{FACTION_NAME}", displayTitle) // displayTitle already has correct name
                     .replace("{FACTION_RELATION_COLOR}", relationColorStr);
-        } else {
-            displayTitle = "Wilderness";
+
+        } else { // Wilderness
+            currentTerritoryIdentifier = "Wilderness";
+            displayTitle = "Wilderness"; // Title for wilderness
             titleColor = ChatColor.GRAY;
             chatMessage = plugin.MESSAGE_ENTERING_WILDERNESS;
         }
 
-        String fullDisplayTitle = titleColor + displayTitle;
-        String lastDisplayed = playerLastDisplayedTitle.get(player.getUniqueId());
+        String lastTerritory = playerLastTerritoryId.get(player.getUniqueId());
 
-        // Only send title and message if it's different from the last one shown or if cooldown has passed
-        // The title system will naturally overwrite. We just control when we send a *new* title event.
-        if (!fullDisplayTitle.equals(lastDisplayed) || (playerTitleCooldown.getOrDefault(player.getUniqueId(), 0L) + (plugin.TITLE_DISPLAY_COOLDOWN_SECONDS * 1000L) <= currentTime)) {
-            player.sendTitle(fullDisplayTitle, null, plugin.TITLE_FADE_IN_TICKS, plugin.TITLE_STAY_TICKS, plugin.TITLE_FADE_OUT_TICKS);
-            player.sendMessage(chatMessage); // Send chat message only to the player
+        if (!currentTerritoryIdentifier.equals(lastTerritory)) {
+            long currentTime = System.currentTimeMillis();
+            long lastTitleSent = playerLastTitleTime.getOrDefault(player.getUniqueId(), 0L);
 
-            playerLastDisplayedTitle.put(player.getUniqueId(), fullDisplayTitle);
-            playerTitleCooldown.put(player.getUniqueId(), currentTime); // Update cooldown timestamp
+            if ((currentTime - lastTitleSent) > (plugin.TITLE_DISPLAY_COOLDOWN_SECONDS * 1000L)) {
+                // plugin.getLogger().log(Level.INFO, "[PCBL] Sending title for " + player.getName() + " entering " + displayTitle);
+                player.sendTitle(titleColor + displayTitle, null, plugin.TITLE_FADE_IN_TICKS, plugin.TITLE_STAY_TICKS, plugin.TITLE_FADE_OUT_TICKS);
+                player.sendMessage(chatMessage); // Send chat message along with title
+                playerLastTitleTime.put(player.getUniqueId(), currentTime);
+            } else {
+                // Cooldown active, but territory changed, so still send chat message if it's different.
+                // Or, if you want chat message also on cooldown, move sendMessage inside the if block.
+                // For now, chat message always sends on territory change if title is on cooldown.
+                // plugin.getLogger().log(Level.FINER, "[PCBL] Title cooldown for " + player.getName() + ". Territory changed to " + displayTitle + ", sending chat message only.");
+                player.sendMessage(chatMessage);
+            }
+            playerLastTerritoryId.put(player.getUniqueId(), currentTerritoryIdentifier);
         }
     }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        playerLastDisplayedTitle.remove(event.getPlayer().getUniqueId());
-        playerTitleCooldown.remove(event.getPlayer().getUniqueId());
+        playerLastTerritoryId.remove(event.getPlayer().getUniqueId());
+        playerLastTitleTime.remove(event.getPlayer().getUniqueId());
     }
 }
