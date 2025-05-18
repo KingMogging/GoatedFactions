@@ -63,6 +63,13 @@ claiming:
   max_members_per_faction: 0         # 0 for unlimited (excluding owner)
   prevent_claim_near_spawn: true
   spawn_protection_radius: 50      # Radius in blocks around server spawn (world spawn) where claiming is prevented
+  allow_nether_claiming: false     # NEW: Set to true to allow claiming in The Nether
+  allow_end_claiming: false        # NEW: Set to true to allow claiming in The End
+  # Worlds where claiming is always disallowed, regardless of other settings (e.g., ["event_world", "minigame_world_nether"])
+  # This is a more advanced option if you want to blacklist specific worlds by name.
+  # For now, we'll use the simpler allow_nether_claiming and allow_end_claiming.
+  # disallowed_claim_worlds: []
+
 
 # Messages (can be expanded)
 messages:
