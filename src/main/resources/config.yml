@@ -4,9 +4,20 @@
 power:
   initial: 100             # Power a new faction (owner) starts with
   per_member_bonus: 100    # Max power increase per member (including owner)
-  regeneration_amount: 1   # Power regenerated per interval
-  regeneration_interval_hours: 1 # How often power regenerates (in hours)
-  loss_on_death_by_enemy: 50
+  # Power Regeneration (per hour)
+  regeneration:
+    offline_amount_per_hour: 2
+    online_amount_per_hour: 5
+  # Power Loss on Death by Enemy
+  loss_on_death:
+    member: 24
+    admin_owner: 50 # For Admins and Owners
+  # Power Decay (after prolonged inactivity)
+  decay:
+    enabled: true
+    days_inactive_before_decay_starts: 30 # Days a faction must be inactive (no member logins)
+    decay_amount_per_day: 5               # Power lost per day once decay starts
+    check_interval_hours: 24              # How often to check for and apply decay (e.g., every 24 hours)
   cost:
     claim_chunk: 5
     overclaim_chunk: 20       # Default cost for overclaiming
@@ -16,6 +27,7 @@ power:
     promote_member: 2
     trust_player: 1
     create_outpost: 50        # Cost to create an outpost
+    claim_fill: 1             # Power cost per chunk for /f claimfill
 
 # Cooldowns & Expirations
 cooldowns:
@@ -47,35 +59,59 @@ dynmap:
     enemy_claim_color: "0xFF0000"   # Red - Used for enemy faction fill
     ally_claim_color: "0x00FFFF"    # Cyan - Used for ally faction fill
     neutral_claim_color: "0xFFFF00" # Yellow - Used for neutral faction fill (if not self, ally, or enemy)
-  # update_interval_seconds: 300 # How often to refresh all claims (optional, if needed for performance)
 
 # Faction Settings
 faction_details:
   name_min_length: 3
   name_max_length: 16
   name_regex: "^[a-zA-Z0-9_]+$" # Allows letters, numbers, underscore
+  # Chat Settings
+  chat:
+    faction_chat_enabled: true
+    ally_chat_enabled: true
+    faction_chat_format: "&8[&2{RANK}&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}" # {RANK} added
+    ally_chat_format: "&8[&6ALLY&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}"
+    public_chat_prefix_format: "&7[{FACTION_NAME}&7] &r" # Prefix for public chat
+  # Feature Toggles
+  enemy_system_enabled: true
+  vault_system_enabled: true
+  outpost_system_enabled: true
   max_outposts: 1                 # Maximum number of outposts a faction can have
-  faction_chat_format: "&8[&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}" # Chat format
 
 # Claiming Restrictions
 claiming:
-  max_claims_per_faction: 0          # 0 for unlimited
-  max_members_per_faction: 0         # 0 for unlimited (excluding owner)
+  # Claim Limits
+  base_claim_limit: 25            # Initial number of claims a new faction gets
+  claims_per_member_bonus: 10     # Additional claims per member (including owner)
+  # Spawn Protection
   prevent_claim_near_spawn: true
-  spawn_protection_radius: 50      # Radius in blocks around server spawn (world spawn) where claiming is prevented
-  allow_nether_claiming: false     # NEW: Set to true to allow claiming in The Nether
-  allow_end_claiming: false        # NEW: Set to true to allow claiming in The End
-  # Worlds where claiming is always disallowed, regardless of other settings (e.g., ["event_world", "minigame_world_nether"])
-  # This is a more advanced option if you want to blacklist specific worlds by name.
-  # For now, we'll use the simpler allow_nether_claiming and allow_end_claiming.
-  # disallowed_claim_worlds: []
-
+  spawn_protection_radius_chunks: 3 # Radius in CHUNKS around server spawn where claiming is prevented
+  # Dimension Claiming
+  allow_nether_claiming: false
+  allow_end_claiming: false
+  # Auto Claim
+  autoclaim_enabled: true
+  # Claim Fill
+  claimfill_enabled: true
+  # disallowed_claim_worlds: [] # Example: ["event_world", "minigame_world_nether"]
 
 # Messages (can be expanded)
 messages:
   entering_wilderness: "&7Now entering Wilderness"
   entering_faction_territory: "&7Now entering {FACTION_RELATION_COLOR}{FACTION_NAME}" # {FACTION_RELATION_COLOR} will be replaced dynamically
+  faction_guide:
+    - "&6--- Faction Guide ---"
+    - "&eCreating a Faction: &fUse /f create <name>"
+    - "&ePower: &fPower is crucial for claiming and maintaining land."
+    - "&f - Factions gain max power per member."
+    - "&f - Power regenerates over time, faster if members are online."
+    - "&f - Losing all power makes your claims vulnerable!"
+    - "&f - Dying to enemies can cause power loss."
+    - "&eClaims: &fUse /f claim to expand your territory."
+    - "&eMore help: &fUse /f help for a full command list."
 
-factions: {} # Data will be stored here
+# --- Data Storage - Do Not Manually Edit Below This Line ---
+factions: {}
 pendingAllyRequests: {}
 pendingMemberInvites: {}
+faction_last_online: {} # Stores last online timestamp for factions (for power decay)

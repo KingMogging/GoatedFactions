@@ -3,6 +3,7 @@ package gg.goatedcraft.gfactions.commands;
 import gg.goatedcraft.gfactions.GFactionsPlugin;
 import gg.goatedcraft.gfactions.data.ChunkWrapper;
 import gg.goatedcraft.gfactions.data.Faction;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
 import org.bukkit.command.Command;
@@ -10,15 +11,18 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections; // Added missing import
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
-
 
 @SuppressWarnings("deprecation")
 public class AdminFactionCommand implements CommandExecutor, TabCompleter {
@@ -69,23 +73,55 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
                 }
                 handleUnclaim(sender, type, factionNameForUnclaim);
                 break;
+            case "vault":
+                if (!plugin.VAULT_SYSTEM_ENABLED) {
+                    sender.sendMessage(ChatColor.RED + "The faction vault system is currently disabled.");
+                    return true;
+                }
+                if (!(sender instanceof Player)) {
+                    sender.sendMessage(ChatColor.RED + "This command can only be run by a player to open a vault.");
+                    return true;
+                }
+                if (args.length < 2) {
+                    sender.sendMessage(ChatColor.RED + "Usage: /fa vault <factionName>");
+                    return true;
+                }
+                handleAdminVault((Player) sender, args[1]);
+                break;
             case "reloadconfig":
-                plugin.reloadConfig();
-                plugin.loadPluginConfig();
-                sender.sendMessage(ChatColor.GREEN + plugin.getName() + " configuration reloaded.");
+                plugin.reloadConfig(); // Bukkit's method to reload config.yml from disk
+                plugin.loadPluginConfig(); // Your custom method to parse and apply these values
+
+                // Re-initialize tasks that depend on config values
+                // It's better to run this slightly delayed if other parts of reloadConfig also schedule tasks
+                // or if loadPluginConfig itself makes Bukkit API calls that are sensitive to plugin state.
+                // For now, direct call is fine.
+                plugin.startPowerRegeneration(); // Re-starts with new config values
+
+                BukkitTask currentPowerDecayTask = plugin.getPowerDecayTask(); // Get the current task
+                if (plugin.POWER_DECAY_ENABLED) {
+                    plugin.startPowerDecayTask(); // Re-starts with new config values, potentially replacing old task
+                } else if (currentPowerDecayTask != null && !currentPowerDecayTask.isCancelled()) {
+                    currentPowerDecayTask.cancel(); // Stop if disabled and task was running
+                }
+                sender.sendMessage(ChatColor.GREEN + plugin.getName() + " configuration reloaded and applied. Tasks depending on config have been reset.");
                 break;
             case "dynmapreload":
             case "dynmaprefresh":
                 if (plugin.DYNMAP_ENABLED && plugin.getDynmapManager() != null) {
                     if (!plugin.getDynmapManager().isEnabled()) {
                         sender.sendMessage(ChatColor.YELLOW + "Dynmap integration was not active. Attempting to reactivate...");
-                        plugin.getDynmapManager().activate();
+                        plugin.getDynmapManager().activate(); // Try to activate if not already
                     }
-                    if (plugin.getDynmapManager().isEnabled()) {
+                    if (plugin.getDynmapManager().isEnabled()) { // Check again after attempting activation
                         plugin.getDynmapManager().updateAllFactionClaimsVisuals();
                         sender.sendMessage(ChatColor.GREEN + "Dynmap faction claims visuals reprocessed.");
-                    } else { sender.sendMessage(ChatColor.RED + "Failed to activate Dynmap integration. Check console.");}
-                } else { sender.sendMessage(ChatColor.RED + "Dynmap integration is disabled or not available.");}
+                    } else {
+                        sender.sendMessage(ChatColor.RED + "Failed to activate Dynmap integration. Check console.");
+                    }
+                } else {
+                    sender.sendMessage(ChatColor.RED + "Dynmap integration is disabled or not available.");
+                }
                 break;
             default:
                 sender.sendMessage(ChatColor.RED + "Unknown admin command. Use /fa help.");
@@ -97,8 +133,11 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
     private void handleDeleteFaction(CommandSender sender, String factionName) {
         Faction faction = plugin.getFaction(factionName);
         if (faction == null) { sender.sendMessage(ChatColor.RED + "Faction '" + factionName + "' not found."); return; }
-        plugin.disbandFactionInternal(faction, true);
+
+        // No need to get members here as disbandFactionInternal will handle tab updates
+        plugin.disbandFactionInternal(faction, true); // true for isAdminAction
         sender.sendMessage(ChatColor.GREEN + "Faction '" + faction.getName() + "' has been forcefully deleted.");
+        // Tab list updates are handled in disbandFactionInternal via updatePlayerTabListName
     }
 
     private void handleAddPower(CommandSender sender, String factionName, String amountStr) {
@@ -107,11 +146,15 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         int amount;
         try { amount = Integer.parseInt(amountStr); }
         catch (NumberFormatException e) { sender.sendMessage(ChatColor.RED + "Invalid amount: '" + amountStr + "'. Must be a whole number."); return; }
-        if (amount <= 0) { sender.sendMessage(ChatColor.RED + "Amount must be positive."); return; }
 
         int oldPower = faction.getCurrentPower();
-        faction.addPower(amount);
-        sender.sendMessage(ChatColor.GREEN + "Added " + (faction.getCurrentPower() - oldPower) + " power to '" + faction.getName() + "'. New: " + faction.getCurrentPower() + "/" + faction.getMaxPower());
+        faction.addPower(amount); // setCurrentPower (called by addPower) already caps it by max power
+        plugin.updateFactionActivity(faction.getNameKey()); // Mark activity
+        plugin.saveFactionsData(); // Save changes
+        sender.sendMessage(ChatColor.GREEN + "Modified power for '" + faction.getName() + "'. Old: " + oldPower + ", New: " + faction.getCurrentPower() + "/" + faction.getMaxPowerCalculated(plugin));
+        if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()) {
+            plugin.getDynmapManager().updateFactionAppearance(faction);
+        }
     }
 
     private void handleSetPower(CommandSender sender, String factionName, String amountStr) {
@@ -120,11 +163,16 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         int amount;
         try { amount = Integer.parseInt(amountStr); }
         catch (NumberFormatException e) { sender.sendMessage(ChatColor.RED + "Invalid amount: '" + amountStr + "'. Must be a whole number."); return; }
-        if (amount < 0) { sender.sendMessage(ChatColor.RED + "Power cannot be negative."); return; }
+        if (amount < 0) { sender.sendMessage(ChatColor.RED + "Power cannot be negative."); return; } // Though setCurrentPower handles min 0
 
         int oldPower = faction.getCurrentPower();
-        faction.setCurrentPower(amount);
-        sender.sendMessage(ChatColor.GREEN + "Set power of '" + faction.getName() + "' to " + faction.getCurrentPower() + "/" + faction.getMaxPower() + " (was " + oldPower + ")");
+        faction.setCurrentPower(amount); // This already caps it by max power and min 0
+        plugin.updateFactionActivity(faction.getNameKey());
+        plugin.saveFactionsData();
+        sender.sendMessage(ChatColor.GREEN + "Set power of '" + faction.getName() + "' to " + faction.getCurrentPower() + "/" + faction.getMaxPowerCalculated(plugin) + " (was " + oldPower + ")");
+        if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()) {
+            plugin.getDynmapManager().updateFactionAppearance(faction);
+        }
     }
 
     private void handleUnclaim(CommandSender sender, String type, @Nullable String factionNameForUnclaim) {
@@ -136,9 +184,9 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
             int initialClaimCount = faction.getClaimedChunks().size();
             if (initialClaimCount == 0) { sender.sendMessage(ChatColor.YELLOW + faction.getName() + " has no chunks to unclaim."); return; }
 
+            // Create a new list to avoid ConcurrentModificationException as faction.removeClaim modifies the set
             new ArrayList<>(faction.getClaimedChunks()).forEach(plugin::unclaimChunkAdmin);
             sender.sendMessage(ChatColor.GREEN + "All " + initialClaimCount + " chunks for '" + faction.getName() + "' have been admin-unclaimed.");
-
         } else if (type.equalsIgnoreCase("current")) {
             if (!(sender instanceof Player player)) {
                 sender.sendMessage(ChatColor.RED + "The 'current' unclaim type can only be executed by a player.");
@@ -147,16 +195,16 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
             Chunk chunk = player.getLocation().getChunk();
             ChunkWrapper cw = new ChunkWrapper(chunk.getWorld().getName(), chunk.getX(), chunk.getZ());
             String ownerKey = plugin.getClaimedChunksMap().get(cw);
-
             if (ownerKey == null) { sender.sendMessage(ChatColor.RED + "The current chunk ("+cw.toStringShort()+") is not claimed."); return; }
 
             Faction chunkOwner = plugin.getFaction(ownerKey);
-            if (chunkOwner == null) {
-                plugin.unclaimChunkAdmin(cw);
+            if (chunkOwner == null) { // Should ideally not happen if ownerKey is not null
+                plugin.unclaimChunkAdmin(cw); // Force unclaim
                 sender.sendMessage(ChatColor.YELLOW + "Chunk ("+cw.toStringShort()+") was claimed by an unknown/ghost faction. It has been forcibly unclaimed.");
                 return;
             }
 
+            // If a faction name is specified, verify it's the correct one before unclaiming
             if (factionNameForUnclaim != null && !chunkOwner.getNameKey().equalsIgnoreCase(factionNameForUnclaim.toLowerCase())) {
                 sender.sendMessage(ChatColor.RED + "Current chunk ("+cw.toStringShort()+") is owned by '" + chunkOwner.getName() + "', not '" + factionNameForUnclaim + "'.");
                 return;
@@ -164,11 +212,25 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
 
             plugin.unclaimChunkAdmin(cw);
             sender.sendMessage(ChatColor.GREEN + "Chunk (" + cw.toStringShort() + ") has been admin-unclaimed from '" + chunkOwner.getName() + "'.");
-
         } else {
             sender.sendMessage(ChatColor.RED + "Invalid unclaim type. Use 'all <factionName>' or 'current [factionName]'.");
         }
     }
+
+    private void handleAdminVault(Player adminPlayer, String factionName) {
+        Faction targetFaction = plugin.getFaction(factionName);
+        if (targetFaction == null) {
+            adminPlayer.sendMessage(ChatColor.RED + "Faction '" + factionName + "' not found.");
+            return;
+        }
+        if (targetFaction.getVault() == null) { // Vault might be null if disabled or error during init
+            adminPlayer.sendMessage(ChatColor.RED + "Faction '" + targetFaction.getName() + "' does not have a vault (possibly disabled or an error).");
+            return;
+        }
+        adminPlayer.openInventory(targetFaction.getVault());
+        adminPlayer.sendMessage(ChatColor.GREEN + "Opening vault for faction: " + targetFaction.getName());
+    }
+
 
     public static void sendAdminHelp(CommandSender sender) {
         sender.sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "--- GoatedFactions Admin Help ---");
@@ -177,6 +239,7 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.GOLD + "/fa setpower <name> <amt>" + ChatColor.GRAY + " - Sets exact power (capped by max, min 0).");
         sender.sendMessage(ChatColor.GOLD + "/fa unclaim all <name>" + ChatColor.GRAY + " - Unclaims all land for specified faction.");
         sender.sendMessage(ChatColor.GOLD + "/fa unclaim current [name]" + ChatColor.GRAY + " - Unclaims current chunk (optionally verify owner).");
+        sender.sendMessage(ChatColor.GOLD + "/fa vault <name>" + ChatColor.GRAY + " - Opens the specified faction's vault.");
         sender.sendMessage(ChatColor.GOLD + "/fa reloadconfig" + ChatColor.GRAY + " - Reloads GoatedFactions config.yml.");
         sender.sendMessage(ChatColor.GOLD + "/fa dynmapreload" + ChatColor.GRAY + " - Reprocesses all faction claims for Dynmap (alias: /fa dynmaprefresh).");
     }
@@ -184,41 +247,40 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command, @NotNull String alias, @NotNull String[] args) {
         if (!sender.hasPermission("goatedfactions.admin")) return Collections.emptyList();
-
         List<String> completions = new ArrayList<>();
         String currentArg = args[args.length - 1].toLowerCase();
 
         if (args.length == 1) {
-            List<String> subCommands = Arrays.asList("help", "deletefaction", "disband", "addpower", "setpower", "unclaim", "reloadconfig", "dynmapreload", "dynmaprefresh");
-            for (String sub : subCommands) {
-                if (sub.startsWith(currentArg)) completions.add(sub);
-            }
+            List<String> subCommands = Arrays.asList("help", "deletefaction", "disband", "addpower", "setpower", "unclaim", "vault", "reloadconfig", "dynmapreload", "dynmaprefresh");
+            subCommands.stream()
+                    .filter(s -> s.startsWith(currentArg))
+                    .forEach(completions::add);
         } else if (args.length == 2) {
             String subCmd = args[0].toLowerCase();
-            if (Arrays.asList("deletefaction", "disband", "addpower", "setpower").contains(subCmd)) {
+            if (Arrays.asList("deletefaction", "disband", "addpower", "setpower", "vault").contains(subCmd)) {
                 plugin.getFactionsByNameKey().values().stream()
-                        .filter(f -> f.getName().toLowerCase().startsWith(currentArg))
-                        .forEach(f -> completions.add(f.getName()));
+                        .map(Faction::getName)
+                        .filter(fName -> fName != null && fName.toLowerCase().startsWith(currentArg))
+                        .forEach(completions::add);
             } else if (subCmd.equals("unclaim")) {
-                List<String> types = Arrays.asList("all", "current");
-                for (String type : types) {
-                    if (type.startsWith(currentArg)) completions.add(type);
-                }
+                Arrays.asList("all", "current").stream()
+                        .filter(s -> s.startsWith(currentArg))
+                        .forEach(completions::add);
             }
         } else if (args.length == 3) {
             String subCmd = args[0].toLowerCase();
-            // String secondArg = args[1].toLowerCase(); // Not strictly needed for this completion logic
+            String secondArg = args[1].toLowerCase();
 
-            if (subCmd.equals("unclaim") && (args[1].equalsIgnoreCase("all") || args[1].equalsIgnoreCase("current"))) {
+            if (subCmd.equals("unclaim") && (secondArg.equals("all") || secondArg.equals("current"))) {
+                // For "unclaim all <factionName>" or "unclaim current <factionName>"
                 plugin.getFactionsByNameKey().values().stream()
-                        .filter(f -> f.getName().toLowerCase().startsWith(currentArg))
-                        .forEach(f -> completions.add(f.getName()));
-            } else if (Arrays.asList("addpower", "setpower").contains(subCmd)) {
-                if ("<amount>".startsWith(currentArg)) {
-                    completions.add("<amount>");
-                }
+                        .map(Faction::getName)
+                        .filter(fName -> fName != null && fName.toLowerCase().startsWith(currentArg))
+                        .forEach(completions::add);
             }
+            // No specific suggestions for power amount args[2] in addpower/setpower
         }
+        completions.sort(String.CASE_INSENSITIVE_ORDER);
         return completions.stream().distinct().collect(Collectors.toList());
     }
 }
