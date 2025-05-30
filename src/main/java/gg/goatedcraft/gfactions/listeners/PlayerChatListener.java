@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.AsyncPlayerChatEvent; // Keep this for chat formatting
+import org.bukkit.event.player.AsyncPlayerChatEvent;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -23,12 +23,12 @@ public class PlayerChatListener implements Listener {
         this.plugin = plugin;
     }
 
-    @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true) // Changed from HIGHEST to allow other plugins to format if needed
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true) // Changed to HIGHEST for public chat
     public void onPlayerChat(AsyncPlayerChatEvent event) {
         Player player = event.getPlayer();
         UUID playerUUID = player.getUniqueId();
         String originalMessage = event.getMessage();
-        String originalFormat = event.getFormat(); // Get the original format
+        // String originalFormat = event.getFormat(); // We will construct the format
 
         Faction playerFaction = plugin.getFactionByPlayer(playerUUID);
 
@@ -36,7 +36,6 @@ public class PlayerChatListener implements Listener {
             if (!plugin.FACTION_CHAT_ENABLED) {
                 player.sendMessage(ChatColor.RED + "Faction chat is currently disabled by an administrator.");
                 plugin.setPlayerFactionChat(playerUUID, false); // Switch them back to public
-                // Resend as public chat
                 Bukkit.getScheduler().runTask(plugin, () -> player.chat(originalMessage));
                 event.setCancelled(true);
                 return;
@@ -52,37 +51,43 @@ public class PlayerChatListener implements Listener {
             }
 
             FactionRank rank = playerFaction.getRank(playerUUID);
-            String rankDisplay = (rank != null) ? rank.getDisplayName() : FactionRank.ASSOCIATE.getDisplayName(); // Default to Associate if somehow null
+            String rankDisplay = (rank != null) ? rank.getDisplayName() : FactionRank.ASSOCIATE.getDisplayName();
 
-            String factionChatFormat = plugin.FACTION_CHAT_FORMAT
-                    .replace("{FACTION_NAME}", playerFaction.getName())
-                    .replace("{PLAYER_NAME}", player.getDisplayName())
+            // Using the modified FACTION_CHAT_FORMAT (rank only prefix)
+            String factionChatFormat = plugin.FACTION_CHAT_FORMAT // This format should now be rank-prefix focused
                     .replace("{RANK}", rankDisplay)
-                    .replace("{MESSAGE}", originalMessage);
+                    .replace("{PLAYER_NAME}", player.getDisplayName()) // Use getDisplayName for consistency with other plugins potentially modifying it
+                    .replace("{MESSAGE}", originalMessage)
+                    // {FACTION_NAME} placeholder might still be in the string from config,
+                    // ensure your config default is updated or it will show "null" or the literal placeholder.
+                    // For safety, explicitly replace it here if it's not part of the desired rank-only format.
+                    .replace("{FACTION_NAME}", playerFaction.getName()); // Keep this if format string might still contain it, otherwise remove
+
 
             Set<Player> recipients = new HashSet<>();
-            // Send to faction members
             for (UUID memberUUID : playerFaction.getMemberUUIDsOnly()) {
                 Player member = Bukkit.getPlayer(memberUUID);
                 if (member != null && member.isOnline()) {
                     recipients.add(member);
                 }
             }
-            // Send to trusted players of this faction (if they are online and not already members)
-            for (UUID trustedUUID : playerFaction.getTrustedPlayers()) {
-                if (!playerFaction.getMembers().containsKey(trustedUUID)) { // Ensure not already a member
-                    Player trustedPlayer = Bukkit.getPlayer(trustedUUID);
-                    if (trustedPlayer != null && trustedPlayer.isOnline()) {
-                        recipients.add(trustedPlayer);
+            // Send to trusted players of this faction if they are online and not already members
+            if (plugin.TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT){ // New config option needed
+                for (UUID trustedUUID : playerFaction.getTrustedPlayers()) {
+                    if (!playerFaction.getMembers().containsKey(trustedUUID)) { // Ensure not already a member
+                        Player trustedPlayer = Bukkit.getPlayer(trustedUUID);
+                        if (trustedPlayer != null && trustedPlayer.isOnline()) {
+                            recipients.add(trustedPlayer);
+                        }
                     }
                 }
             }
+
 
             for (Player recipient : recipients) {
                 recipient.sendMessage(factionChatFormat);
             }
 
-            // Send to spying operators
             for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
                 if (onlinePlayer.hasPermission("goatedfactions.admin.spy") && !recipients.contains(onlinePlayer)) {
                     onlinePlayer.sendMessage(ChatColor.GRAY + "[F-SPY] " + ChatColor.stripColor(factionChatFormat));
@@ -91,9 +96,9 @@ public class PlayerChatListener implements Listener {
             plugin.getLogger().info("[FactionChat] " + ChatColor.stripColor(factionChatFormat));
 
         } else if (plugin.isPlayerInAllyChat(playerUUID)) {
-            if (!plugin.ALLY_CHAT_ENABLED) {
-                player.sendMessage(ChatColor.RED + "Ally chat is currently disabled by an administrator.");
-                plugin.setPlayerAllyChat(playerUUID, false); // Switch them back to public
+            if (!plugin.ALLY_CHAT_ENABLED || !plugin.ENEMY_SYSTEM_ENABLED) { // Ally chat disabled if enemy system is off
+                player.sendMessage(ChatColor.RED + "Ally chat is currently disabled.");
+                plugin.setPlayerAllyChat(playerUUID, false);
                 Bukkit.getScheduler().runTask(plugin, () -> player.chat(originalMessage));
                 event.setCancelled(true);
                 return;
@@ -108,19 +113,17 @@ public class PlayerChatListener implements Listener {
             }
 
             String allyChatFormat = plugin.ALLY_CHAT_FORMAT
-                    .replace("{FACTION_NAME}", playerFaction.getName()) // Sender's faction name
+                    .replace("{FACTION_NAME}", playerFaction.getName())
                     .replace("{PLAYER_NAME}", player.getDisplayName())
                     .replace("{MESSAGE}", originalMessage);
 
             Set<Player> recipients = new HashSet<>();
-            // Add sender's faction members
             for (UUID memberUUID : playerFaction.getMemberUUIDsOnly()) {
                 Player member = Bukkit.getPlayer(memberUUID);
                 if (member != null && member.isOnline()) {
                     recipients.add(member);
                 }
             }
-            // Add members of all allied factions
             for (String allyKey : playerFaction.getAllyFactionKeys()) {
                 Faction allyFaction = plugin.getFaction(allyKey);
                 if (allyFaction != null) {
@@ -137,9 +140,8 @@ public class PlayerChatListener implements Listener {
                 recipient.sendMessage(allyChatFormat);
             }
 
-            // Send to spying operators
             for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
-                if (onlinePlayer.hasPermission("goatedfactions.admin.allyspy") && !recipients.contains(onlinePlayer)) { // New perm for ally spy
+                if (onlinePlayer.hasPermission("goatedfactions.admin.allyspy") && !recipients.contains(onlinePlayer)) {
                     onlinePlayer.sendMessage(ChatColor.GRAY + "[A-SPY] " + ChatColor.stripColor(allyChatFormat));
                 }
             }
@@ -147,30 +149,31 @@ public class PlayerChatListener implements Listener {
 
         } else { // Public chat - apply prefix
             if (playerFaction != null) {
-                String prefix = plugin.PUBLIC_CHAT_PREFIX_FORMAT.replace("{FACTION_NAME}", playerFaction.getName());
-                // event.setFormat(prefix + event.getFormat()); // This prepends to the existing format string
-                // A more common way is to set the display name or modify the format string carefully.
-                // For compatibility, let's try modifying the format string directly.
-                // The default format is usually like "<%1$s> %2$s" where %1$s is player name, %2$s is message.
-                // We want it to be "[FactionName] <%1$s> %2$s"
-                // This can be tricky if other plugins also modify chat format.
-                // A common approach is to use PlaceholderAPI if available, or a configurable format string.
-                // For now, let's prepend the prefix to the player's display name part of the format.
+                // Determine prefix style (short tag like tab)
+                FactionRank rank = playerFaction.getRank(player.getUniqueId()); // Rank needed for color
+                ChatColor factionColor = ChatColor.GRAY;
+                if (rank != null) {
+                    switch (rank) {
+                        case OWNER: factionColor = ChatColor.GOLD; break;
+                        case ADMIN: factionColor = ChatColor.RED; break;
+                        case MEMBER: factionColor = ChatColor.GREEN; break;
+                        case ASSOCIATE: factionColor = ChatColor.AQUA; break;
+                    }
+                }
+                String factionTag = playerFaction.getName().substring(0, Math.min(playerFaction.getName().length(), plugin.FACTION_TAG_LENGTH)).toUpperCase();
+                String chatPrefix = ChatColor.translateAlternateColorCodes('&',
+                        plugin.PUBLIC_CHAT_TAG_FORMAT
+                                .replace("{FACTION_TAG_COLOR}", factionColor.toString())
+                                .replace("{FACTION_TAG}", factionTag)
+                );
 
-                // Bukkit's default format is "<%1$s> %2$s"
-                // We want "[FactionName] PlayerName: Message"
-                // So, if original format is "<%1$s> %2$s", we change it to "prefix %1$s: %2$s"
-                // This is a simplification. A robust solution often involves a chat handling library or PlaceholderAPI.
-
-                // Let's try a simpler approach: set a prefix for the player's name in the chat.
-                // This is often done by setting the player's display name temporarily or using a chat formatting event.
-                // Since AsyncPlayerChatEvent is cancellable and we can set the format, we can try:
-                String newFormat = prefix + originalFormat; // Prepend our prefix to the existing format string
-                event.setFormat(newFormat);
-
-                // Tab list prefix is handled differently, usually via Player#setPlayerListName()
-                // or scoreboard teams. We'll address tab list separately.
+                // Construct a new format string: [TAG] <PlayerName> Message
+                // %1$s is player's display name, %2$s is the message.
+                // Make sure to include colors for player name and message if desired, or let other plugins handle that.
+                // This format string will be: PREFIX <PlayerNameFromEvent> MessageFromEvent
+                event.setFormat(chatPrefix + "%1$s" + ChatColor.RESET + ": %2$s");
             }
+            // If no faction, default chat handling applies
         }
     }
 }

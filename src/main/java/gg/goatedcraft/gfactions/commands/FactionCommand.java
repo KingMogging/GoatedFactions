@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
 public class FactionCommand implements CommandExecutor, TabCompleter {
 
     private final GFactionsPlugin plugin;
-    private static final String COST_PLACEHOLDER = ChatColor.GOLD.toString(); // This remains .toString() as it's defining a String constant
+    private static final String COST_PLACEHOLDER = ChatColor.GOLD.toString();
 
     public FactionCommand(GFactionsPlugin plugin) {
         this.plugin = plugin;
@@ -131,8 +131,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 break;
             case "setrank":
                 if (args.length < 3) {
-                    player.sendMessage(ChatColor.RED + "Usage: /f setrank <player> <rank>");
-                    player.sendMessage(ChatColor.GRAY + "Available ranks: Associate, Member, Admin");
+                    player.sendMessage(ChatColor.RED + "Usage: /f setrank <player> <Associate|Member|Admin>");
                     return true;
                 }
                 handleSetRank(player, playerFaction, args[1], args[2]);
@@ -167,7 +166,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 handleVault(player, playerFaction);
                 break;
             case "ally":
-                if (!plugin.ALLY_CHAT_ENABLED) {
+                if (!plugin.ENEMY_SYSTEM_ENABLED) { // Ally commands depend on enemy system
                     player.sendMessage(ChatColor.RED + "The alliance system is currently disabled.");
                     return true;
                 }
@@ -179,8 +178,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 break;
             case "unally":
             case "neutral":
-                if (!plugin.ALLY_CHAT_ENABLED && !plugin.ENEMY_SYSTEM_ENABLED) {
-                    player.sendMessage(ChatColor.RED + "Relation management (ally/neutral/enemy) is currently disabled.");
+                if (!plugin.ENEMY_SYSTEM_ENABLED) { // These commands depend on enemy system
+                    player.sendMessage(ChatColor.RED + "Relation management is currently disabled.");
                     return true;
                 }
                 if (args.length < 2) {
@@ -190,7 +189,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 handleUnallyOrNeutral(player, playerFaction, args[1]);
                 break;
             case "allyaccept":
-                if (!plugin.ALLY_CHAT_ENABLED) {
+                if (!plugin.ENEMY_SYSTEM_ENABLED) { // Ally commands depend on enemy system
                     player.sendMessage(ChatColor.RED + "The alliance system is currently disabled.");
                     return true;
                 }
@@ -201,7 +200,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 handleAllyAccept(player, playerFaction, args[1]);
                 break;
             case "allyrequests":
-                if (!plugin.ALLY_CHAT_ENABLED) {
+                if (!plugin.ENEMY_SYSTEM_ENABLED) { // Ally commands depend on enemy system
                     player.sendMessage(ChatColor.RED + "The alliance system is currently disabled.");
                     return true;
                 }
@@ -231,8 +230,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 break;
             case "allychat":
             case "ac":
-                if (!plugin.ALLY_CHAT_ENABLED) {
-                    player.sendMessage(ChatColor.RED + "Ally chat is currently disabled by an administrator.");
+                if (!plugin.ALLY_CHAT_ENABLED || !plugin.ENEMY_SYSTEM_ENABLED) { // Ally chat also depends on enemy system
+                    player.sendMessage(ChatColor.RED + "Ally chat is currently disabled.");
                     return true;
                 }
                 handleAllyChatToggle(player, playerFaction);
@@ -269,6 +268,9 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             case "guide":
                 handleGuide(player);
                 break;
+            case "togglepvp": // New command
+                handleTogglePvp(player, playerFaction);
+                break;
             default:
                 sendPlayerHelp(player);
                 break;
@@ -286,35 +288,33 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         if (plugin.CLAIMFILL_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f claimfill" + ChatColor.GRAY + " - Attempt to claim surrounded chunks (Cost: " + COST_PLACEHOLDER + plugin.COST_CLAIM_FILL_PER_CHUNK + "/chunk" + ChatColor.GRAY + ").");
         player.sendMessage(ChatColor.YELLOW + "/f unclaim" + ChatColor.GRAY + " - Unclaim the chunk you are standing in.");
         player.sendMessage(ChatColor.YELLOW + "/f sethome" + ChatColor.GRAY + " - Set your faction's home in claimed land.");
-        player.sendMessage(ChatColor.YELLOW + "/f home [faction]" + ChatColor.GRAY + " - Teleport to faction home.");
+        player.sendMessage(ChatColor.YELLOW + "/f home [faction]" + ChatColor.GRAY + " - Teleport to faction home (or trusted/ally).");
         player.sendMessage(ChatColor.YELLOW + "/f invite <player>" + ChatColor.GRAY + " - Invite a player to your faction.");
         player.sendMessage(ChatColor.YELLOW + "/f uninvite <player>" + ChatColor.GRAY + " - Revoke an invitation.");
         player.sendMessage(ChatColor.YELLOW + "/f kick <player>" + ChatColor.GRAY + " - Kick a player from your faction.");
         player.sendMessage(ChatColor.YELLOW + "/f leave" + ChatColor.GRAY + " - Leave your current faction.");
         player.sendMessage(ChatColor.YELLOW + "/f accept <factionName>" + ChatColor.GRAY + " - Accept an invite to a faction.");
         player.sendMessage(ChatColor.YELLOW + "/f power [player/faction]" + ChatColor.GRAY + " - Check power levels.");
-        player.sendMessage(ChatColor.YELLOW + "/f setrank <player> <rank>" + ChatColor.GRAY + " - Set a player's rank (Associate, Member, Admin).");
+        player.sendMessage(ChatColor.YELLOW + "/f setrank <player> <rank>" + ChatColor.GRAY + " - Set rank (Associate, Member, Admin).");
         player.sendMessage(ChatColor.YELLOW + "/f leader <player>" + ChatColor.GRAY + " - Transfer faction ownership.");
         player.sendMessage(ChatColor.YELLOW + "/f trust <player>" + ChatColor.GRAY + " - Trust a player in your territory.");
         player.sendMessage(ChatColor.YELLOW + "/f untrust <player>" + ChatColor.GRAY + " - Untrust a player.");
-        if (plugin.VAULT_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f vault" + ChatColor.GRAY + " - Open faction vault.");
-        if (plugin.ALLY_CHAT_ENABLED) {
+        if (plugin.VAULT_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f vault" + ChatColor.GRAY + " - Open faction vault (Admin/Owner only).");
+
+        if (plugin.ENEMY_SYSTEM_ENABLED) {
             player.sendMessage(ChatColor.YELLOW + "/f ally <faction>" + ChatColor.GRAY + " - Request alliance (Cost: " + COST_PLACEHOLDER + plugin.COST_SEND_ALLY_REQUEST + ChatColor.GRAY + ").");
             player.sendMessage(ChatColor.YELLOW + "/f unally <faction>" + ChatColor.GRAY + " - Break alliance with a faction.");
             player.sendMessage(ChatColor.YELLOW + "/f allyaccept <faction>" + ChatColor.GRAY + " - Accept an alliance request.");
             player.sendMessage(ChatColor.YELLOW + "/f allyrequests" + ChatColor.GRAY + " - List pending ally requests.");
-        }
-        if (plugin.ENEMY_SYSTEM_ENABLED) {
             player.sendMessage(ChatColor.YELLOW + "/f enemy <faction>" + ChatColor.GRAY + " - Declare a faction as an enemy (Cost: " + COST_PLACEHOLDER + plugin.COST_DECLARE_ENEMY + ChatColor.GRAY + ").");
-        }
-        if (plugin.ENEMY_SYSTEM_ENABLED || plugin.ALLY_CHAT_ENABLED) {
             player.sendMessage(ChatColor.YELLOW + "/f neutral <faction>" + ChatColor.GRAY + " - Set faction to neutral (Cost: " + COST_PLACEHOLDER + plugin.COST_DECLARE_NEUTRAL + ChatColor.GRAY + ").");
         }
 
         player.sendMessage(ChatColor.YELLOW + "/f disband" + ChatColor.GRAY + " - Disband your faction.");
         if (plugin.FACTION_CHAT_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f chat|c" + ChatColor.GRAY + " - Toggle faction-only chat.");
-        if (plugin.ALLY_CHAT_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f allychat|ac" + ChatColor.GRAY + " - Toggle ally-only chat.");
+        if (plugin.ALLY_CHAT_ENABLED && plugin.ENEMY_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f allychat|ac" + ChatColor.GRAY + " - Toggle ally-only chat.");
         if (plugin.OUTPOST_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f outpost" + ChatColor.GRAY + " - View outpost subcommands.");
+        player.sendMessage(ChatColor.YELLOW + "/f togglepvp" + ChatColor.GRAY + " - Toggle PvP protection in your faction's territory (Admin/Owner).");
         player.sendMessage(ChatColor.YELLOW + "/f guide" + ChatColor.GRAY + " - Shows a quick faction guide.");
         if (player.hasPermission("goatedfactions.admin")) {
             player.sendMessage(ChatColor.RED + "Admin commands: /fa help");
@@ -384,7 +384,9 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(ChatColor.GREEN + "Faction '" + ChatColor.AQUA + newFaction.getName() + ChatColor.GREEN + "' has been created!");
             player.sendMessage(ChatColor.GREEN + "Your home has been set at your current location, and this chunk has been claimed.");
             player.sendMessage(ChatColor.GREEN + "Power: " + newFaction.getCurrentPower() + "/" + newFaction.getMaxPowerCalculated(plugin));
-            player.sendMessage(ChatColor.GREEN + "Claim limit: " + newFaction.getClaimedChunks().size() + "/" + newFaction.getMaxClaimsCalculated(plugin));
+            int maxClaims = newFaction.getMaxClaimsCalculated(plugin);
+            if (newFaction.getClaimLimitOverride() != -1) maxClaims = newFaction.getClaimLimitOverride();
+            player.sendMessage(ChatColor.GREEN + "Claim limit: " + newFaction.getClaimedChunks().size() + "/" + (maxClaims == Integer.MAX_VALUE ? "Unlimited" : maxClaims));
             plugin.updatePlayerTabListName(player);
         } else {
             player.sendMessage(ChatColor.RED + "Failed to create faction. This might be due to an internal error or an existing faction/player conflict not caught earlier.");
@@ -419,11 +421,13 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             Faction fac = allFactions.get(i);
             OfflinePlayer owner = Bukkit.getOfflinePlayer(fac.getOwnerUUID());
             String ownerName = owner.getName() != null ? owner.getName() : "Unknown (" + fac.getOwnerUUID().toString().substring(0,6) + ")";
+            int maxClaims = fac.getMaxClaimsCalculated(plugin);
+            if (fac.getClaimLimitOverride() != -1) maxClaims = fac.getClaimLimitOverride();
             player.sendMessage(ChatColor.YELLOW + "" + (i + 1) + ". " + fac.getName() +
                     ChatColor.GRAY + " (" + fac.getMembers().size() + " members, Owner: " + ownerName +
                     ", Power: " + fac.getCurrentPower() + "/" + fac.getMaxPowerCalculated(plugin) +
                     ", Claims: " + fac.getClaimedChunks().size() + "/" +
-                    fac.getMaxClaimsCalculated(plugin) + ")");
+                    (maxClaims == Integer.MAX_VALUE ? "Unlimited" : maxClaims) + ")");
         }
     }
 
@@ -448,8 +452,13 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.GOLD + "--- " + ChatColor.AQUA + targetFaction.getName() + ChatColor.GOLD + " ---");
         player.sendMessage(ChatColor.YELLOW + "Owner: " + ChatColor.WHITE + ownerName);
         player.sendMessage(ChatColor.YELLOW + "Power: " + ChatColor.RED + targetFaction.getCurrentPower() + ChatColor.GRAY + "/" + ChatColor.GREEN + targetFaction.getMaxPowerCalculated(plugin));
+        int maxClaims = targetFaction.getMaxClaimsCalculated(plugin);
+        if (targetFaction.getClaimLimitOverride() != -1) maxClaims = targetFaction.getClaimLimitOverride();
         player.sendMessage(ChatColor.YELLOW + "Claims: " + ChatColor.WHITE + targetFaction.getClaimedChunks().size() +
-                "/" + targetFaction.getMaxClaimsCalculated(plugin));
+                "/" + (maxClaims == Integer.MAX_VALUE ? "Unlimited" : maxClaims));
+        player.sendMessage(ChatColor.YELLOW + "PvP Protection: " + (targetFaction.isPvpProtected() ? ChatColor.GREEN + "Enabled" : ChatColor.RED + "Disabled"));
+
+
         if (targetFaction.getHomeLocation() != null) {
             Location home = targetFaction.getHomeLocation();
             player.sendMessage(ChatColor.YELLOW + "Home: " + ChatColor.WHITE + (home.getWorld() != null ? home.getWorld().getName() : "N/A") +
@@ -504,17 +513,19 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(ChatColor.YELLOW + "Members (1): " + ownerStatusPrefix + ChatColor.GOLD + FactionRank.OWNER.getDisplayName() + ": " + ownerDisplayName);
         }
 
-        if (plugin.ALLY_CHAT_ENABLED && !targetFaction.getAllyFactionKeys().isEmpty()) {
-            String allies = targetFaction.getAllyFactionKeys().stream()
-                    .map(key -> { Faction f = plugin.getFaction(key); return f != null && f.getName() != null ? f.getName() : key; })
-                    .collect(Collectors.joining(", "));
-            player.sendMessage(ChatColor.YELLOW + "Allies: " + ChatColor.AQUA + allies);
-        }
-        if (plugin.ENEMY_SYSTEM_ENABLED && !targetFaction.getEnemyFactionKeys().isEmpty()) {
-            String enemies = targetFaction.getEnemyFactionKeys().stream()
-                    .map(key -> { Faction f = plugin.getFaction(key); return f != null && f.getName() != null ? f.getName() : key; })
-                    .collect(Collectors.joining(", "));
-            player.sendMessage(ChatColor.YELLOW + "Enemies: " + ChatColor.DARK_RED + enemies);
+        if (plugin.ENEMY_SYSTEM_ENABLED) {
+            if (!targetFaction.getAllyFactionKeys().isEmpty()) {
+                String allies = targetFaction.getAllyFactionKeys().stream()
+                        .map(key -> { Faction f = plugin.getFaction(key); return f != null && f.getName() != null ? f.getName() : key; })
+                        .collect(Collectors.joining(", "));
+                player.sendMessage(ChatColor.YELLOW + "Allies: " + ChatColor.AQUA + allies);
+            }
+            if (!targetFaction.getEnemyFactionKeys().isEmpty()) {
+                String enemies = targetFaction.getEnemyFactionKeys().stream()
+                        .map(key -> { Faction f = plugin.getFaction(key); return f != null && f.getName() != null ? f.getName() : key; })
+                        .collect(Collectors.joining(", "));
+                player.sendMessage(ChatColor.YELLOW + "Enemies: " + ChatColor.DARK_RED + enemies);
+            }
         }
         if (plugin.OUTPOST_SYSTEM_ENABLED && !targetFaction.getOutposts().isEmpty()) {
             player.sendMessage(ChatColor.YELLOW + "Outposts: " + ChatColor.WHITE + targetFaction.getOutposts().size() +
@@ -535,7 +546,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can claim
             player.sendMessage(ChatColor.RED + "You must be an admin or owner to claim land.");
             return;
         }
@@ -543,7 +554,9 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         Chunk chunkToClaim = player.getLocation().getChunk();
         if (plugin.claimChunk(playerFaction, chunkToClaim, false, isOutpostCreation, attachingToOutpost, player)) {
             player.sendMessage(ChatColor.GREEN + "Power: " + playerFaction.getCurrentPower() + "/" + playerFaction.getMaxPowerCalculated(plugin));
-            player.sendMessage(ChatColor.GREEN + "Claims: " + playerFaction.getClaimedChunks().size() + "/" + playerFaction.getMaxClaimsCalculated(plugin));
+            int maxClaims = playerFaction.getMaxClaimsCalculated(plugin);
+            if (playerFaction.getClaimLimitOverride() != -1) maxClaims = playerFaction.getClaimLimitOverride();
+            player.sendMessage(ChatColor.GREEN + "Claims: " + playerFaction.getClaimedChunks().size() + "/" + (maxClaims == Integer.MAX_VALUE ? "Unlimited" : maxClaims));
         }
     }
 
@@ -553,7 +566,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can autoclaim
             player.sendMessage(ChatColor.RED + "You must be an admin or owner to toggle autoclaim.");
             return;
         }
@@ -572,7 +585,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can unclaim
             player.sendMessage(ChatColor.RED + "You must be an admin or owner to unclaim land.");
             return;
         }
@@ -587,7 +600,9 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
 
         plugin.unclaimChunkPlayer(playerFaction, cw, player);
         player.sendMessage(ChatColor.GRAY + "Power: " + playerFaction.getCurrentPower() + "/" + playerFaction.getMaxPowerCalculated(plugin));
-        player.sendMessage(ChatColor.GRAY + "Claims: " + playerFaction.getClaimedChunks().size() + "/" + playerFaction.getMaxClaimsCalculated(plugin));
+        int maxClaims = playerFaction.getMaxClaimsCalculated(plugin);
+        if (playerFaction.getClaimLimitOverride() != -1) maxClaims = playerFaction.getClaimLimitOverride();
+        player.sendMessage(ChatColor.GRAY + "Claims: " + playerFaction.getClaimedChunks().size() + "/" + (maxClaims == Integer.MAX_VALUE ? "Unlimited" : maxClaims));
     }
 
     private void handleSetHome(Player player, @Nullable Faction playerFaction) {
@@ -596,7 +611,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can sethome
             player.sendMessage(ChatColor.RED + "You must be an admin or owner to set the faction home.");
             return;
         }
@@ -614,7 +629,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
     }
 
     private void handleHome(Player player, @Nullable Faction playerFaction, @Nullable String targetFactionName, boolean isOutpostHomeCmd) {
-        if (isOutpostHomeCmd) return;
+        if (isOutpostHomeCmd) return; // This command is not for outpost homes
         Faction targetFac;
         if (targetFactionName != null) {
             targetFac = plugin.getFaction(targetFactionName);
@@ -622,15 +637,13 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 player.sendMessage(ChatColor.RED + "Faction '" + targetFactionName + "' not found.");
                 return;
             }
-            boolean canTeleportToOther = playerFaction != null &&
-                    (playerFaction.equals(targetFac) ||
-                            (plugin.ALLY_CHAT_ENABLED && playerFaction.isAlly(targetFac.getNameKey())));
-            if (playerFaction != null && !playerFaction.equals(targetFac) && !canTeleportToOther) {
-                player.sendMessage(ChatColor.RED + "You can only teleport to your own faction's home or an ally's home.");
-                return;
-            }
-            if (playerFaction == null && !player.hasPermission("goatedfactions.admin.home.other")) {
-                player.sendMessage(ChatColor.RED + "You are not in a faction and cannot teleport to other faction homes.");
+            // Check if player is member, ally, or trusted with the target faction
+            boolean canTeleportToOther = (playerFaction != null && playerFaction.equals(targetFac)) ||
+                    (playerFaction != null && plugin.ENEMY_SYSTEM_ENABLED && plugin.ALLY_CHAT_ENABLED && playerFaction.isAlly(targetFac.getNameKey())) ||
+                    targetFac.isTrusted(player.getUniqueId());
+
+            if (!canTeleportToOther && !player.hasPermission("goatedfactions.admin.home.other")) {
+                player.sendMessage(ChatColor.RED + "You can only teleport to your own faction's home, an ally's home, or a faction that trusts you.");
                 return;
             }
         } else {
@@ -660,7 +673,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = inviterFaction.getRank(inviter.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can invite
             inviter.sendMessage(ChatColor.RED + "You must be an admin or owner to invite players.");
             return;
         }
@@ -698,7 +711,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can uninvite
             player.sendMessage(ChatColor.RED + "You must be an admin or owner to uninvite players.");
             return;
         }
@@ -706,13 +719,11 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         String targetDisplayName = targetOfflinePlayer.getName() != null ?
                 targetOfflinePlayer.getName() : targetPlayerName;
 
-        if (!targetOfflinePlayer.hasPlayedBefore() && !targetOfflinePlayer.isOnline()) {
-            Map<UUID, Long> pendingInvites = plugin.getPendingMemberInvitesForFaction(playerFaction.getNameKey());
-            if (pendingInvites == null || !pendingInvites.containsKey(targetOfflinePlayer.getUniqueId())) {
-                player.sendMessage(ChatColor.RED + "Player '" + targetDisplayName + "' not found or no pending invite for them from your faction.");
-                return;
-            }
+        if (!targetOfflinePlayer.hasPlayedBefore() && !targetOfflinePlayer.isOnline() && !plugin.getPendingMemberInvitesForFaction(playerFaction.getNameKey()).containsKey(targetOfflinePlayer.getUniqueId())) {
+            player.sendMessage(ChatColor.RED + "Player '" + targetDisplayName + "' not found or no pending invite for them from your faction.");
+            return;
         }
+
 
         plugin.revokeMemberInvite(playerFaction, targetOfflinePlayer);
         player.sendMessage(ChatColor.GREEN + "Any pending invite for " + targetDisplayName + " to your faction has been revoked.");
@@ -724,7 +735,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank kickerRank = kickerFaction.getRank(kicker.getUniqueId());
-        if (kickerRank == null || !kickerRank.isAdminOrHigher()) {
+        if (kickerRank == null || !kickerRank.isAdminOrHigher()) { // Only Admin/Owner can kick
             kicker.sendMessage(ChatColor.RED + "You must be an admin or owner to kick members.");
             return;
         }
@@ -758,10 +769,11 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             kicker.sendMessage(ChatColor.RED + "Only the owner can kick other admins.");
             return;
         }
-        if (kickerRank != FactionRank.OWNER && targetRank.ordinal() >= kickerRank.ordinal()) {
+        if (kickerRank != FactionRank.OWNER && targetRank.ordinal() >= kickerRank.ordinal() && !kicker.getUniqueId().equals(kickerFaction.getOwnerUUID())) {
             kicker.sendMessage(ChatColor.RED + "You cannot kick a member of equal or higher rank than yourself.");
             return;
         }
+
 
         if (plugin.removePlayerFromFaction(kickerFaction, targetOfflinePlayer.getUniqueId(), true)) {
             kickerFaction.broadcastMessage(ChatColor.AQUA + targetDisplayName + ChatColor.YELLOW + " has been kicked from the faction by " + ChatColor.AQUA + kicker.getName() + ChatColor.YELLOW + ".", null);
@@ -790,11 +802,11 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(ChatColor.GREEN + "You have left " + factionNameBeforeLeave + ".");
             plugin.updatePlayerTabListName(player);
 
-            Faction factionAfterLeave = plugin.getFaction(factionNameBeforeLeave);
-            if (factionAfterLeave != null) {
+            Faction factionAfterLeave = plugin.getFaction(factionNameBeforeLeave); // Re-fetch, might be null if disbanded
+            if (factionAfterLeave != null) { // Check if faction still exists
                 factionAfterLeave.broadcastMessage(ChatColor.AQUA + player.getName() + ChatColor.YELLOW + " has left the faction.", player.getUniqueId());
-            } else {
-                Bukkit.broadcastMessage(ChatColor.GOLD + factionNameBeforeLeave + " has been disbanded as its last member left.");
+            } else { // Faction was disbanded
+                Bukkit.broadcastMessage(ChatColor.GOLD + "Faction " + ChatColor.AQUA + factionNameBeforeLeave + ChatColor.GOLD + " has been disbanded as its last member left.");
             }
         } else {
             player.sendMessage(ChatColor.RED + "Could not leave faction. This is an unexpected error.");
@@ -813,8 +825,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         }
 
         if (plugin.acceptMemberInvite(player.getUniqueId(), targetFaction.getNameKey())) {
-            player.sendMessage(ChatColor.GREEN + "You have joined " + targetFaction.getName() + "!");
-            targetFaction.broadcastMessage(ChatColor.AQUA + player.getName() + ChatColor.GREEN + " has joined the faction!", null);
+            player.sendMessage(ChatColor.GREEN + "You have joined " + targetFaction.getName() + " as an Associate!");
+            targetFaction.broadcastMessage(ChatColor.AQUA + player.getName() + ChatColor.GREEN + " has joined the faction as an Associate!", null);
             plugin.updatePlayerTabListName(player);
         } else {
             player.sendMessage(ChatColor.RED + "Failed to join " + targetFaction.getName() + ". The invite may have expired, been revoked, or the faction is full.");
@@ -864,7 +876,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank actorRank = actorFaction.getRank(actor.getUniqueId());
-        if (actorRank == null || !actorRank.isAdminOrHigher()) {
+        if (actorRank == null || !actorRank.isAdminOrHigher()) { // Only Admin/Owner can set ranks
             actor.sendMessage(ChatColor.RED + "You must be an Admin or Owner to set ranks.");
             return;
         }
@@ -893,39 +905,42 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (actor.getUniqueId().equals(targetOfflinePlayer.getUniqueId()) && actorRank != FactionRank.OWNER) {
-            actor.sendMessage(ChatColor.RED + "You cannot change your own rank unless you are the Owner (e.g. to fix a display). Use /f leader to change actual ownership.");
+            actor.sendMessage(ChatColor.RED + "You cannot change your own rank unless you are the Owner.");
             return;
         }
 
-        FactionRank newRank = FactionRank.fromString(rankName);
-        boolean validRankName = false;
-        for(FactionRank r : FactionRank.values()){
-            if(r.name().equalsIgnoreCase(rankName) || r.getDisplayName().equalsIgnoreCase(rankName)){
-                newRank = r; // ensure newRank is the correctly cased enum constant
-                validRankName = true;
-                break;
-            }
-        }
-        if(!validRankName) {
+
+        FactionRank newRank = FactionRank.fromString(rankName); // fromString handles display name or enum name
+        if (newRank == FactionRank.MEMBER && rankName.equalsIgnoreCase("member")) {
+            // This is fine, fromString will return MEMBER
+        } else if (newRank == FactionRank.ADMIN && rankName.equalsIgnoreCase("admin")) {
+            // This is fine
+        } else if (newRank == FactionRank.ASSOCIATE && rankName.equalsIgnoreCase("associate")) {
+            // This is fine
+        } else if (newRank == FactionRank.MEMBER && !rankName.equalsIgnoreCase(FactionRank.MEMBER.getDisplayName()) && !rankName.equalsIgnoreCase(FactionRank.MEMBER.name())) {
+            // If fromString defaulted to MEMBER due to invalid input, but user didn't type "Member"
             actor.sendMessage(ChatColor.RED + "Invalid rank specified: " + rankName + ". Available: Associate, Member, Admin.");
             return;
         }
+
 
         if (newRank == FactionRank.OWNER) {
             actor.sendMessage(ChatColor.RED + "To make someone Owner, use /f leader <player>.");
             return;
         }
 
-        if (actorRank != FactionRank.OWNER) {
+        // Hierarchy checks
+        if (actorRank != FactionRank.OWNER) { // If actor is Admin
             if (newRank == FactionRank.ADMIN || targetCurrentRank == FactionRank.ADMIN) {
                 actor.sendMessage(ChatColor.RED + "Only the Owner can promote to Admin or change an Admin's rank.");
                 return;
             }
-            if (newRank.ordinal() > actorRank.ordinal()) {
-                actor.sendMessage(ChatColor.RED + "You cannot set a rank higher than your own.");
+            if (newRank.ordinal() > actorRank.ordinal()) { // Admin cannot promote to a rank logically higher than Admin (none here, but good check)
+                actor.sendMessage(ChatColor.RED + "You cannot set a rank higher than your own (Admin).");
                 return;
             }
         }
+        // Owner can do anything except demote self from Owner via setrank
 
         if (targetCurrentRank == newRank) {
             actor.sendMessage(ChatColor.YELLOW + targetDisplayName + " is already a " + newRank.getDisplayName() + ".");
@@ -934,10 +949,21 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
 
         boolean success;
         if (newRank.ordinal() > targetCurrentRank.ordinal()) { // Promotion
-            success = actorFaction.promotePlayer(targetOfflinePlayer.getUniqueId(), newRank);
+            // Specific check for Associate -> Member
+            if (targetCurrentRank == FactionRank.ASSOCIATE && newRank == FactionRank.MEMBER) {
+                success = actorFaction.promotePlayer(targetOfflinePlayer.getUniqueId(), newRank);
+            } else {
+                success = actorFaction.promotePlayer(targetOfflinePlayer.getUniqueId(), newRank);
+            }
         } else { // Demotion
-            success = actorFaction.demotePlayer(targetOfflinePlayer.getUniqueId(), newRank);
+            // Specific check for Member -> Associate
+            if (targetCurrentRank == FactionRank.MEMBER && newRank == FactionRank.ASSOCIATE) {
+                success = actorFaction.demotePlayer(targetOfflinePlayer.getUniqueId(), newRank);
+            } else {
+                success = actorFaction.demotePlayer(targetOfflinePlayer.getUniqueId(), newRank);
+            }
         }
+
 
         if (success) {
             actorFaction.broadcastMessage(ChatColor.AQUA + targetDisplayName + ChatColor.GREEN + " is now a " + ChatColor.YELLOW + newRank.getDisplayName() + ChatColor.GREEN + " (set by " + actor.getName() + ").", null);
@@ -972,8 +998,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank targetRank = faction.getRank(newOwnerOfflinePlayer.getUniqueId());
-        if (targetRank == null || !targetRank.isMemberOrHigher()) {
-            currentOwner.sendMessage(ChatColor.RED + newLeaderDisplayName + " must be at least a Member to become the leader.");
+        if (targetRank == null || !targetRank.isAssociateOrHigher()) { // Changed to isAssociateOrHigher
+            currentOwner.sendMessage(ChatColor.RED + newLeaderDisplayName + " must be at least an Associate to become the leader.");
             return;
         }
 
@@ -995,7 +1021,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = trusterFaction.getRank(truster.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can trust
             truster.sendMessage(ChatColor.RED + "You must be an admin or owner to manage trusted players.");
             return;
         }
@@ -1026,7 +1052,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = untrusterFaction.getRank(untruster.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can untrust
             untruster.sendMessage(ChatColor.RED + "You must be an admin or owner to manage trusted players.");
             return;
         }
@@ -1052,6 +1078,13 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(ChatColor.RED + "You must be in a faction to use the vault.");
             return;
         }
+        // Vault access check
+        FactionRank rank = playerFaction.getRank(player.getUniqueId());
+        if (rank == null || !rank.isAdminOrHigher()) {
+            player.sendMessage(ChatColor.RED + "Only Admins and the Owner can access the faction vault.");
+            return;
+        }
+
         if (playerFaction.getVault() == null) {
             player.sendMessage(ChatColor.RED + "The vault for your faction is currently unavailable (possibly disabled).");
             return;
@@ -1066,7 +1099,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = requesterFaction.getRank(requesterPlayer.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can manage alliances
             requesterPlayer.sendMessage(ChatColor.RED + "You must be an admin or owner to manage alliances.");
             return;
         }
@@ -1083,7 +1116,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             requesterPlayer.sendMessage(ChatColor.YELLOW + "You are already allied with " + targetFaction.getName() + ".");
             return;
         }
-        if (plugin.ENEMY_SYSTEM_ENABLED && requesterFaction.isEnemy(targetFaction.getNameKey())) {
+        if (requesterFaction.isEnemy(targetFaction.getNameKey())) {
             requesterPlayer.sendMessage(ChatColor.RED + "You are enemies with " + targetFaction.getName() + ". You must become neutral first.");
             return;
         }
@@ -1102,7 +1135,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can manage relations
             player.sendMessage(ChatColor.RED + "You must be an admin or owner to manage relations.");
             return;
         }
@@ -1116,11 +1149,11 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        if (plugin.ALLY_CHAT_ENABLED && playerFaction.isAlly(targetFaction.getNameKey())) {
+        if (playerFaction.isAlly(targetFaction.getNameKey())) {
             plugin.revokeAlliance(playerFaction, targetFaction);
             playerFaction.broadcastMessage(ChatColor.YELLOW + "Your faction is no longer allied with " + ChatColor.AQUA + targetFaction.getName() + ChatColor.YELLOW + ".", null);
             plugin.notifyFaction(targetFaction, ChatColor.AQUA + playerFaction.getName() + ChatColor.YELLOW + " has ended your alliance.", null);
-        } else if (plugin.ENEMY_SYSTEM_ENABLED && playerFaction.isEnemy(targetFaction.getNameKey())) {
+        } else if (playerFaction.isEnemy(targetFaction.getNameKey())) {
             long timeSinceDeclaredEnemy = System.currentTimeMillis() - playerFaction.getEnemyDeclareTimestamps().getOrDefault(targetFaction.getNameKey().toLowerCase(), 0L);
             long cooldownMillis = TimeUnit.HOURS.toMillis(plugin.COOLDOWN_ENEMY_NEUTRAL_HOURS);
 
@@ -1153,7 +1186,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = accepterFaction.getRank(accepterPlayer.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can accept alliances
             accepterPlayer.sendMessage(ChatColor.RED + "You must be an admin or owner to accept alliances.");
             return;
         }
@@ -1201,7 +1234,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can declare enemies
             player.sendMessage(ChatColor.RED + "You must be an admin or owner to declare enemies.");
             return;
         }
@@ -1231,7 +1264,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         playerFaction.removePower(plugin.COST_DECLARE_ENEMY);
         long declareTime = System.currentTimeMillis();
         playerFaction.addEnemy(targetFaction.getNameKey(), declareTime);
-        targetFaction.addEnemy(playerFaction.getNameKey(), declareTime);
+        targetFaction.addEnemy(playerFaction.getNameKey(), declareTime); // Mutual
         plugin.saveFactionsData();
         if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()) {
             plugin.getDynmapManager().updateFactionRelations(playerFaction, targetFaction);
@@ -1252,8 +1285,9 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         }
 
         String factionName = playerFaction.getName();
-        plugin.disbandFactionInternal(playerFaction, false);
+        plugin.disbandFactionInternal(playerFaction, false); // false for not an admin action (owner initiated)
         Bukkit.broadcastMessage(ChatColor.GOLD + "Faction " + ChatColor.AQUA + factionName + ChatColor.GOLD + " has been disbanded by its owner, " + player.getName() + ".");
+        // Tab list updates for former members are handled in disbandFactionInternal
     }
 
     private void handleFactionChatToggle(Player player, @Nullable Faction playerFaction) {
@@ -1291,7 +1325,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner can create outposts
             player.sendMessage(ChatColor.RED + "Only faction admins or the owner can create outposts.");
             return;
         }
@@ -1332,17 +1366,21 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         }
 
         Outpost newOutpost = new Outpost(player.getLocation(), cw);
+        // Claim the chunk for the outpost; this method now handles the isOutpostCreation flag
         if (plugin.claimChunk(playerFaction, currentChunk, false, true, newOutpost, player)) {
-            if (playerFaction.addOutpost(newOutpost)) {
-                playerFaction.removePower(plugin.COST_CREATE_OUTPOST);
+            // If claimChunk was successful (which it should be if it passed checks and this is wilderness)
+            if (playerFaction.addOutpost(newOutpost)) { // Add to faction's outpost list
+                playerFaction.removePower(plugin.COST_CREATE_OUTPOST); // Deduct power for outpost creation itself
                 plugin.saveFactionsData();
                 player.sendMessage(ChatColor.GREEN + "Outpost #" + newOutpost.getOutpostID() + " created at your location! This chunk is now its home.");
                 player.sendMessage(ChatColor.GREEN + "Power: " + playerFaction.getCurrentPower() + "/" + playerFaction.getMaxPowerCalculated(plugin));
             } else {
-                plugin.unclaimChunkPlayer(playerFaction, cw, null);
+                // Should not happen if max outposts check passed. Rollback claim if addOutpost failed.
+                plugin.unclaimChunkPlayer(playerFaction, cw, null); // Silently unclaim if addOutpost failed
                 player.sendMessage(ChatColor.RED + "Failed to finalize outpost creation despite successful claim. Outpost creation cancelled.");
             }
         } else {
+            // claimChunk itself would have sent a message.
             player.sendMessage(ChatColor.RED + "Failed to claim land for the outpost. Outpost creation cancelled.");
         }
     }
@@ -1381,7 +1419,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner
             player.sendMessage(ChatColor.RED + "Only faction admins or the owner can set outpost homes.");
             return;
         }
@@ -1425,13 +1463,13 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             return;
         }
         FactionRank rank = playerFaction.getRank(player.getUniqueId());
-        if (rank == null || !rank.isAdminOrHigher()) {
+        if (rank == null || !rank.isAdminOrHigher()) { // Only Admin/Owner
             player.sendMessage(ChatColor.RED + "Only faction admins or the owner can delete outposts.");
             return;
         }
         Outpost targetOutpost = getTargetOutpostByIdentifier(player, playerFaction, outpostIdentifier);
         if (targetOutpost == null) return;
-        int outpostOldId = targetOutpost.getOutpostID();
+        int outpostOldId = targetOutpost.getOutpostID(); // Get ID before removal for message
         if (playerFaction.removeOutpostAndItsClaims(targetOutpost)) {
             plugin.saveFactionsData();
             if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()){
@@ -1442,6 +1480,27 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(ChatColor.RED + "Failed to delete outpost #" + outpostOldId + ". It might not exist anymore or an error occurred.");
         }
     }
+
+    private void handleTogglePvp(Player player, @Nullable Faction playerFaction) {
+        if (playerFaction == null) {
+            player.sendMessage(ChatColor.RED + "You must be in a faction to toggle PvP status.");
+            return;
+        }
+        FactionRank rank = playerFaction.getRank(player.getUniqueId());
+        if (rank == null || !rank.isAdminOrHigher()) {
+            player.sendMessage(ChatColor.RED + "Only faction admins or the owner can toggle PvP status.");
+            return;
+        }
+        playerFaction.setPvpProtected(!playerFaction.isPvpProtected());
+        plugin.saveFactionsData();
+        player.sendMessage(ChatColor.GREEN + "PvP protection in your faction's territory is now " +
+                (playerFaction.isPvpProtected() ? ChatColor.GREEN + "ENABLED" : ChatColor.RED + "DISABLED") +
+                ChatColor.GREEN + ".");
+        playerFaction.broadcastMessage(ChatColor.YELLOW + "PvP protection in your faction's territory has been " +
+                (playerFaction.isPvpProtected() ? ChatColor.GREEN + "ENABLED" : ChatColor.RED + "DISABLED") +
+                ChatColor.YELLOW + " by " + player.getName() + ".", player.getUniqueId());
+    }
+
 
     private String formatTimeApprox(long millis) {
         if (millis < 0) return "expired";
@@ -1469,14 +1528,15 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             List<String> subCommands = new ArrayList<>(Arrays.asList(
                     "help", "create", "list", "who", "info", "invite", "uninvite", "kick", "leave", "accept",
                     "claim", "unclaim", "sethome", "home", "power", "setrank", "leader", "owner",
-                    "trust", "untrust", "disband", "guide"
+                    "trust", "untrust", "disband", "guide", "togglepvp"
             ));
             if (plugin.AUTOCLAIM_ENABLED) subCommands.add("autoclaim");
             if (plugin.CLAIMFILL_ENABLED) subCommands.add("claimfill");
             if (plugin.VAULT_SYSTEM_ENABLED) subCommands.add("vault");
-            if (plugin.ALLY_CHAT_ENABLED) subCommands.addAll(Arrays.asList("ally", "unally", "allyaccept", "allyrequests", "allychat", "ac"));
-            if (plugin.ENEMY_SYSTEM_ENABLED) subCommands.add("enemy");
-            if (plugin.ENEMY_SYSTEM_ENABLED || plugin.ALLY_CHAT_ENABLED) subCommands.add("neutral");
+            if (plugin.ENEMY_SYSTEM_ENABLED) { // Enemy system toggle controls these
+                subCommands.addAll(Arrays.asList("ally", "unally", "allyaccept", "allyrequests", "enemy", "neutral"));
+                if (plugin.ALLY_CHAT_ENABLED) subCommands.addAll(Arrays.asList("allychat", "ac"));
+            }
             if (plugin.FACTION_CHAT_ENABLED) subCommands.addAll(Arrays.asList("chat", "c"));
             if (plugin.OUTPOST_SYSTEM_ENABLED) subCommands.add("outpost");
 
@@ -1512,16 +1572,22 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 }
             } else if (mainSubCmd.equals("setrank") && args.length == 3) {
                 Arrays.stream(FactionRank.values())
-                        .filter(rank -> rank != FactionRank.OWNER)
+                        .filter(rank -> rank != FactionRank.OWNER) // Cannot set to Owner via /f setrank
                         .map(FactionRank::getDisplayName)
                         .filter(rankName -> rankName.toLowerCase().startsWith(currentArg))
                         .forEach(completions::add);
-            } else if (Arrays.asList("who", "info", "home", "accept", "ally", "unally", "neutral", "enemy", "allyaccept").contains(mainSubCmd) && args.length == 2) {
+            } else if (Arrays.asList("who", "info", "home", "accept").contains(mainSubCmd) && args.length == 2) {
                 plugin.getFactionsByNameKey().values().stream()
                         .map(Faction::getName)
                         .filter(name -> name != null && name.toLowerCase().startsWith(currentArg))
                         .forEach(completions::add);
-            } else if (mainSubCmd.equals("power") && args.length == 2) {
+            } else if (plugin.ENEMY_SYSTEM_ENABLED && Arrays.asList("ally", "unally", "neutral", "enemy", "allyaccept").contains(mainSubCmd) && args.length == 2) {
+                plugin.getFactionsByNameKey().values().stream()
+                        .map(Faction::getName)
+                        .filter(name -> name != null && name.toLowerCase().startsWith(currentArg) && (playerFaction == null || !name.equalsIgnoreCase(playerFaction.getName())))
+                        .forEach(completions::add);
+            }
+            else if (mainSubCmd.equals("power") && args.length == 2) {
                 plugin.getFactionsByNameKey().values().stream()
                         .map(Faction::getName)
                         .filter(name -> name != null && name.toLowerCase().startsWith(currentArg))

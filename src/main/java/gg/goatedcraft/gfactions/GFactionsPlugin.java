@@ -82,7 +82,7 @@ public class GFactionsPlugin extends JavaPlugin {
     public int COST_DECLARE_ENEMY = 10;
     public int COST_DECLARE_NEUTRAL = 10;
     public int COST_SEND_ALLY_REQUEST = 10;
-    public int COST_PROMOTE_MEMBER = 2; // This might be unused if setrank has no cost
+    public int COST_PROMOTE_MEMBER = 2;
     public int COST_TRUST_PLAYER = 1;
     public int COST_CREATE_OUTPOST = 50;
     public int COST_CLAIM_FILL_PER_CHUNK = 1;
@@ -109,10 +109,16 @@ public class GFactionsPlugin extends JavaPlugin {
     public Pattern FACTION_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
     public boolean FACTION_CHAT_ENABLED = true;
     public boolean ALLY_CHAT_ENABLED = true;
-    public String FACTION_CHAT_FORMAT = "&8[&2{RANK}&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}";
+    // UPDATED DEFAULT for FACTION_CHAT_FORMAT
+    public String FACTION_CHAT_FORMAT = "&8[&2{RANK}&8] &f{PLAYER_NAME}: &e{MESSAGE}";
     public String ALLY_CHAT_FORMAT = "&8[&6ALLY&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}";
-    public String PUBLIC_CHAT_PREFIX_FORMAT = "&7[{FACTION_NAME}&7] &r";
-    public boolean ENEMY_SYSTEM_ENABLED = true;
+    public String PUBLIC_CHAT_PREFIX_FORMAT = "&7[{FACTION_NAME}&7] &r"; // Original, for full name prefix
+    public String PUBLIC_CHAT_TAG_FORMAT = "&8[{FACTION_TAG_COLOR}{FACTION_TAG}&8] "; // New, for short tag prefix
+    public int FACTION_TAG_LENGTH = 4; // New config for tag length
+    public boolean TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT = false; // New
+
+    public boolean ENEMY_SYSTEM_ENABLED = true; // Now directly here, was in faction_details
+    public boolean PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT = false; // New
     public boolean VAULT_SYSTEM_ENABLED = true;
     public boolean OUTPOST_SYSTEM_ENABLED = true;
     public int MAX_OUTPOSTS_PER_FACTION = 1;
@@ -128,14 +134,13 @@ public class GFactionsPlugin extends JavaPlugin {
     public String MESSAGE_ENTERING_WILDERNESS = ChatColor.translateAlternateColorCodes('&', "&7Now entering Wilderness");
     public String MESSAGE_ENTERING_FACTION_TERRITORY = ChatColor.translateAlternateColorCodes('&', "&7Now entering {FACTION_RELATION_COLOR}{FACTION_NAME}");
     public Location SERVER_SPAWN_LOCATION;
-    // Max number of chunks claimfill will attempt to scan/fill in one go to prevent lag
     private static final int CLAIM_FILL_MAX_POCKET_SIZE = 100;
     private static final int CLAIM_FILL_BFS_LIMIT = 500;
 
 
     @Override
     public void onEnable() {
-        boolean enabledSuccessfully = false; // Redundancy will be removed by IDE
+        boolean enabledSuccessfully = false;
         getLogger().info(getName() + " is starting the enabling process...");
         try {
             if (!getDataFolder().exists()) {
@@ -251,10 +256,9 @@ public class GFactionsPlugin extends JavaPlugin {
             return;
         }
 
-        if (enabledSuccessfully) { // This condition will always be true if no exception occurs
+        if (enabledSuccessfully) {
             getLogger().info(getName() + " has been successfully enabled and initialized!");
         } else {
-            // This case should ideally not be reached if an error causes disablePlugin to be called
             getLogger().severe(getName() + " completed onEnable but was not marked as successfully enabled. Check for earlier critical errors.");
         }
     }
@@ -352,10 +356,22 @@ public class GFactionsPlugin extends JavaPlugin {
 
         FACTION_CHAT_ENABLED = config.getBoolean("faction_details.chat.faction_chat_enabled", true);
         ALLY_CHAT_ENABLED = config.getBoolean("faction_details.chat.ally_chat_enabled", true);
-        FACTION_CHAT_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.faction_chat_format", "&8[&2{RANK}&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}"));
+        // UPDATED DEFAULT for FACTION_CHAT_FORMAT
+        FACTION_CHAT_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.faction_chat_format", "&8[&2{RANK}&8] &f{PLAYER_NAME}: &e{MESSAGE}"));
         ALLY_CHAT_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.ally_chat_format", "&8[&6ALLY&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}"));
-        PUBLIC_CHAT_PREFIX_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_prefix_format", "&7[{FACTION_NAME}&7] &r"));
+        PUBLIC_CHAT_PREFIX_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_prefix_format", "&7[{FACTION_NAME}&7] &r")); // Kept for potential other uses
+        PUBLIC_CHAT_TAG_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_tag_format", "&8[{FACTION_TAG_COLOR}{FACTION_TAG}&8] "));
+        FACTION_TAG_LENGTH = config.getInt("faction_details.chat.faction_tag_length", 4);
+        TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT = config.getBoolean("faction_details.chat.trusted_hear_faction_chat", false);
+
+
         ENEMY_SYSTEM_ENABLED = config.getBoolean("faction_details.enemy_system_enabled", true);
+        // If enemy system is disabled, ally system related features are also disabled.
+        if (!ENEMY_SYSTEM_ENABLED) {
+            ALLY_CHAT_ENABLED = false; // Disable ally chat if enemy system is off
+        }
+
+        PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT = config.getBoolean("claiming.pvp_protection_enabled_by_default", false);
         VAULT_SYSTEM_ENABLED = config.getBoolean("faction_details.vault_system_enabled", true);
         OUTPOST_SYSTEM_ENABLED = config.getBoolean("faction_details.outpost_system_enabled", true);
         MAX_OUTPOSTS_PER_FACTION = config.getInt("faction_details.max_outposts", 1);
@@ -391,7 +407,7 @@ public class GFactionsPlugin extends JavaPlugin {
     }
 
 
-    public void startPowerRegeneration() { // Made public
+    public void startPowerRegeneration() {
         if (powerRegenTask != null && !powerRegenTask.isCancelled()) {
             powerRegenTask.cancel();
         }
@@ -424,7 +440,7 @@ public class GFactionsPlugin extends JavaPlugin {
         getLogger().info("Power regeneration task scheduled to run every " + (powerRegenIntervalTicks / 20.0) + " seconds.");
     }
 
-    public void startPowerDecayTask() { // Made public
+    public void startPowerDecayTask() {
         if (powerDecayTask != null && !powerDecayTask.isCancelled()) {
             powerDecayTask.cancel();
         }
@@ -496,7 +512,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
 
         if (PREVENT_CLAIM_NEAR_SPAWN && SERVER_SPAWN_LOCATION != null) {
-            // Chunk playerChunk = owner.getLocation().getChunk(); // Redundant, initialChunk is the same
             Chunk spawnServerChunk = SERVER_SPAWN_LOCATION.getChunk();
 
             if (Objects.equals(initialChunk.getWorld().getName(), spawnServerChunk.getWorld().getName())) {
@@ -514,7 +529,7 @@ public class GFactionsPlugin extends JavaPlugin {
         Faction faction = new Faction(name, owner.getUniqueId(), owner.getLocation(), this);
         updateFactionActivity(faction.getNameKey());
 
-        claimedChunks.put(initialChunkWrapper, nameKey); // Claim the initial chunk
+        claimedChunks.put(initialChunkWrapper, nameKey);
         factionsByNameKey.put(nameKey, faction);
         playerFactionMembership.put(owner.getUniqueId(), nameKey);
         updatePlayerTabListName(owner);
@@ -527,8 +542,6 @@ public class GFactionsPlugin extends JavaPlugin {
         return faction;
     }
 
-    // This method was marked as unused in the screenshot, it can be kept or removed.
-    // For now, I'll keep it as it doesn't cause a compile error.
     public boolean createFaction(Player owner, String name) {
         return createFactionAndReturn(owner, name) != null;
     }
@@ -584,14 +597,14 @@ public class GFactionsPlugin extends JavaPlugin {
 
         long expiryTime = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(EXPIRATION_MEMBER_INVITE_MINUTES);
         pendingMemberInvites.computeIfAbsent(invitingFaction.getNameKey(), k -> new ConcurrentHashMap<>()).put(invitedPlayerUUID, expiryTime);
-        saveFactionsData(); // Consider if this needs to be saved immediately or can be batched
+        saveFactionsData();
         return true;
     }
     public void revokeMemberInvite(Faction invitingFaction, OfflinePlayer invitedOfflinePlayer) {
         Map<UUID, Long> factionInvites = pendingMemberInvites.get(invitingFaction.getNameKey());
         if (factionInvites != null) {
             if (factionInvites.remove(invitedOfflinePlayer.getUniqueId()) != null) {
-                saveFactionsData(); // Consider batching
+                saveFactionsData();
             }
         }
     }
@@ -605,8 +618,8 @@ public class GFactionsPlugin extends JavaPlugin {
         if (invitesForFaction == null || !invitesForFaction.containsKey(playerUUID) || invitesForFaction.get(playerUUID) < System.currentTimeMillis()) {
             return false;
         }
-        if (getFactionByPlayer(playerUUID) != null) return false; // Already in a faction
-        if (targetFaction.addMember(playerUUID, FactionRank.MEMBER)) {
+        if (getFactionByPlayer(playerUUID) != null) return false;
+        if (targetFaction.addMember(playerUUID, FactionRank.ASSOCIATE)) { // New members join as ASSOCIATE by default
             playerFactionMembership.put(playerUUID, targetFaction.getNameKey());
             invitesForFaction.remove(playerUUID);
             updateFactionActivity(targetFaction.getNameKey());
@@ -624,7 +637,7 @@ public class GFactionsPlugin extends JavaPlugin {
             long currentTime = System.currentTimeMillis();
             invites.entrySet().removeIf(entry -> entry.getValue() < currentTime);
             if(invites.isEmpty()) pendingMemberInvites.remove(inviterFactionKey.toLowerCase());
-            return Collections.unmodifiableMap(new HashMap<>(invites)); // Return a copy
+            return Collections.unmodifiableMap(new HashMap<>(invites));
         }
         return Collections.emptyMap();
     }
@@ -633,23 +646,21 @@ public class GFactionsPlugin extends JavaPlugin {
     public boolean removePlayerFromFaction(Faction faction, UUID playerUUID, boolean isKick) {
         if (!faction.getMembers().containsKey(playerUUID)) return false;
         if (faction.isOwner(playerUUID)) {
-            if (faction.getMembers().size() == 1) { // Owner is the last member
-                disbandFactionInternal(faction, false); // Disband if owner leaves and is last
+            if (faction.getMembers().size() == 1) {
+                disbandFactionInternal(faction, false);
                 return true;
-            } else if (!isKick) { // Owner trying to leave with other members present
+            } else if (!isKick) {
                 Player ownerPlayer = Bukkit.getPlayer(playerUUID);
                 if (ownerPlayer != null) {
                     ownerPlayer.sendMessage(ChatColor.RED + "You must transfer ownership or disband the faction.");
                 }
                 return false;
             }
-            // If it's a kick of the owner, it should be handled by /f leader or /f disband, not here.
-            // This method assumes an owner cannot be "kicked" by normal means.
         }
 
         if (faction.removeMember(playerUUID)) {
             playerFactionMembership.remove(playerUUID);
-            faction.removeTrusted(playerUUID); // Untrust if they were trusted
+            faction.removeTrusted(playerUUID);
             updateFactionActivity(faction.getNameKey());
             Player player = Bukkit.getPlayer(playerUUID);
             if (player != null) updatePlayerTabListName(player);
@@ -686,7 +697,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
 
         if (PREVENT_CLAIM_NEAR_SPAWN && SERVER_SPAWN_LOCATION != null) {
-            // Chunk claimChunk = chunk; // Redundant
             Chunk spawnServerChunk = SERVER_SPAWN_LOCATION.getChunk();
             if (Objects.equals(chunk.getWorld().getName(), spawnServerChunk.getWorld().getName())) {
                 int distChunksX = Math.abs(chunk.getX() - spawnServerChunk.getX());
@@ -701,6 +711,10 @@ public class GFactionsPlugin extends JavaPlugin {
         }
 
         int maxClaims = faction.getMaxClaimsCalculated(this);
+        if (faction.getClaimLimitOverride() != -1) { // Check for override
+            maxClaims = faction.getClaimLimitOverride();
+        }
+
         if (!isOutpostCreation && maxClaims != Integer.MAX_VALUE && faction.getClaimedChunks().size() >= maxClaims) {
             if (player != null) player.sendMessage(ChatColor.RED + "Your faction has reached its claim limit (" + maxClaims + ").");
             return false;
@@ -714,18 +728,21 @@ public class GFactionsPlugin extends JavaPlugin {
         }
 
 
-        if (currentOwnerFaction != null) { // Land is already claimed
+        if (currentOwnerFaction != null) {
             if (currentOwnerFaction.equals(faction)) {
                 if (player != null) player.sendMessage(ChatColor.YELLOW + "Your faction already owns this land.");
                 return false;
             }
 
-            // Trying to claim from another faction
-            if (!isOverclaim) { // Not an overclaim attempt
+            if (!isOverclaim) {
                 if (player != null) player.sendMessage(ChatColor.RED + "This land is claimed by " + currentOwnerFaction.getName() + ".");
                 return false;
             }
-            // This IS an overclaim attempt
+            // Overclaim attempt
+            if (!ENEMY_SYSTEM_ENABLED) {
+                if (player != null) player.sendMessage(ChatColor.RED + "Overclaiming is disabled because the enemy system is off.");
+                return false;
+            }
             if (currentOwnerFaction.getCurrentPower() > 0) {
                 if (player != null) player.sendMessage(ChatColor.RED + currentOwnerFaction.getName() + " still has power ("+currentOwnerFaction.getCurrentPower()+") and cannot be overclaimed.");
                 return false;
@@ -735,12 +752,12 @@ public class GFactionsPlugin extends JavaPlugin {
                 return false;
             }
             faction.removePower(COST_OVERCLAIM_CHUNK);
-            currentOwnerFaction.removeClaim(cw); // Make the original owner unclaim it
-            claimedChunks.remove(cw); // Also remove from global map for old owner
+            currentOwnerFaction.removeClaim(cw);
+            claimedChunks.remove(cw);
             getLogger().info("Faction " + faction.getName() + " overclaimed chunk " + cw.toStringShort() + " from " + currentOwnerFaction.getName());
             notifyFaction(currentOwnerFaction, ChatColor.DARK_RED + "Your land at (" + cw.getX() + "," + cw.getZ() + ") in " + cw.getWorldName() + " has been overclaimed by " + faction.getName() + "!", null);
         } else { // Land is wilderness
-            if (faction.getCurrentPower() < COST_CLAIM_CHUNK && !isOutpostCreation) { // Outpost creation itself costs power, not the first claim for it.
+            if (faction.getCurrentPower() < COST_CLAIM_CHUNK && !isOutpostCreation) {
                 if (player != null) player.sendMessage(ChatColor.RED + "Not enough power to claim. Cost: " + COST_CLAIM_CHUNK);
                 return false;
             }
@@ -759,7 +776,7 @@ public class GFactionsPlugin extends JavaPlugin {
 
         if (dynmapManager != null && dynmapManager.isEnabled()) {
             dynmapManager.updateFactionClaimsVisual(faction);
-            if (currentOwnerFaction != null) { // If overclaimed, update the old owner too
+            if (currentOwnerFaction != null) {
                 dynmapManager.updateFactionClaimsVisual(currentOwnerFaction);
             }
         }
@@ -789,7 +806,7 @@ public class GFactionsPlugin extends JavaPlugin {
         if (chunkWrapper.equals(faction.getHomeChunk())) {
             Set<ChunkWrapper> mainTerritory = new HashSet<>(faction.getClaimedChunks());
             faction.getOutposts().forEach(op -> mainTerritory.removeAll(op.getOutpostSpecificClaims()));
-            if (mainTerritory.size() <= 1) { // Only home chunk left in main territory
+            if (mainTerritory.size() <= 1) {
                 if (player != null) {
                     player.sendMessage(ChatColor.RED + "You cannot unclaim your faction's only main territory chunk that also contains your home. Set home elsewhere or unclaim other chunks first.");
                 }
@@ -812,7 +829,7 @@ public class GFactionsPlugin extends JavaPlugin {
         }
 
 
-        faction.removeClaim(chunkWrapper); // This will handle home relocation if needed
+        faction.removeClaim(chunkWrapper);
         claimedChunks.remove(chunkWrapper);
         if(player != null) player.sendMessage(ChatColor.YELLOW + "Land unclaimed: " + chunkWrapper.toStringShort() + " in " + chunkWrapper.getWorldName());
         updateFactionActivity(faction.getNameKey());
@@ -826,7 +843,7 @@ public class GFactionsPlugin extends JavaPlugin {
         if (ownerKey != null) {
             Faction faction = getFaction(ownerKey);
             if (faction != null) {
-                faction.removeClaim(chunkWrapper); // This will handle home relocation if needed
+                faction.removeClaim(chunkWrapper);
                 updateFactionActivity(faction.getNameKey());
                 if (dynmapManager != null && dynmapManager.isEnabled()) {
                     dynmapManager.updateFactionClaimsVisual(faction);
@@ -839,13 +856,13 @@ public class GFactionsPlugin extends JavaPlugin {
 
 
     public boolean sendAllyRequest(Faction requesterFaction, Faction targetFaction) {
-        if (!ALLY_CHAT_ENABLED) {
-            Player p = Bukkit.getPlayer(requesterFaction.getOwnerUUID()); // Or any admin member
+        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) { // Also check ENEMY_SYSTEM_ENABLED
+            Player p = Bukkit.getPlayer(requesterFaction.getOwnerUUID());
             if(p != null) p.sendMessage(ChatColor.RED + "The alliance system is currently disabled.");
             return false;
         }
 
-        Player p = Bukkit.getPlayer(requesterFaction.getOwnerUUID()); // For messaging the requester
+        Player p = Bukkit.getPlayer(requesterFaction.getOwnerUUID());
         if (requesterFaction.getCurrentPower() < COST_SEND_ALLY_REQUEST) {
             if (p!=null) p.sendMessage(ChatColor.RED + "Not enough power to send ally request. Cost: " + COST_SEND_ALLY_REQUEST);
             return false;
@@ -872,7 +889,7 @@ public class GFactionsPlugin extends JavaPlugin {
     }
 
     public boolean acceptAllyRequest(Faction acceptingFaction, Faction requestingFaction) {
-        if (!ALLY_CHAT_ENABLED) return false;
+        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return false; // Also check ENEMY_SYSTEM_ENABLED
         Map<String, Long> requestsForAccepting = pendingAllyRequests.get(acceptingFaction.getNameKey());
         if (requestsForAccepting == null || !requestsForAccepting.containsKey(requestingFaction.getNameKey()) || requestsForAccepting.get(requestingFaction.getNameKey()) < System.currentTimeMillis()) {
             return false;
@@ -884,7 +901,7 @@ public class GFactionsPlugin extends JavaPlugin {
 
         Map<String, Long> requestsForRequesting = pendingAllyRequests.get(requestingFaction.getNameKey());
         if (requestsForRequesting != null) {
-            requestsForRequesting.remove(acceptingFaction.getNameKey()); // Remove reverse request if it existed
+            requestsForRequesting.remove(acceptingFaction.getNameKey());
         }
         updateFactionActivity(acceptingFaction.getNameKey());
         updateFactionActivity(requestingFaction.getNameKey());
@@ -898,19 +915,19 @@ public class GFactionsPlugin extends JavaPlugin {
         Map<String, Long> requests = pendingAllyRequests.get(targetFactionNameKey.toLowerCase());
         if (requests != null) {
             long currentTime = System.currentTimeMillis();
-            requests.entrySet().removeIf(entry -> entry.getValue() < currentTime); // Clean up expired
+            requests.entrySet().removeIf(entry -> entry.getValue() < currentTime);
             if(requests.isEmpty()) pendingAllyRequests.remove(targetFactionNameKey.toLowerCase());
-            return Collections.unmodifiableMap(new HashMap<>(requests)); // Return a copy
+            return Collections.unmodifiableMap(new HashMap<>(requests));
         }
         return Collections.emptyMap();
     }
 
 
     public void revokeAlliance(Faction faction1, Faction faction2) {
-        if (!ALLY_CHAT_ENABLED) return;
+        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return; // Also check ENEMY_SYSTEM_ENABLED
         boolean changed1 = faction1.removeAlly(faction2.getNameKey());
         boolean changed2 = faction2.removeAlly(faction1.getNameKey());
-        if (changed1 || changed2) { // Only save if a change occurred
+        if (changed1 || changed2) {
             updateFactionActivity(faction1.getNameKey());
             updateFactionActivity(faction2.getNameKey());
             if (dynmapManager != null && dynmapManager.isEnabled()) {
@@ -970,7 +987,7 @@ public class GFactionsPlugin extends JavaPlugin {
                         }
                     } catch (Exception e) {
                         getLogger().warning("Error loading home location for faction " + nameKey + ": " + e.getMessage() + ". Home will be null.");
-                        homeLoc = null; // Ensure it's null on error
+                        homeLoc = null;
                     }
                 }
 
@@ -978,6 +995,9 @@ public class GFactionsPlugin extends JavaPlugin {
                 Faction faction = new Faction(originalName, ownerUUID, homeLoc, this);
                 faction.setCurrentPower(facSec.getInt("currentPower"));
                 faction.setAccumulatedFractionalPower(facSec.getDouble("fractionalPower", 0.0));
+                faction.setClaimLimitOverride(facSec.getInt("claimLimitOverride", -1)); // Load claim limit override
+                faction.setPvpProtected(facSec.getBoolean("pvpProtected", this.PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT)); // Load PvP status
+
 
                 ConfigurationSection membersSec = facSec.getConfigurationSection("members");
                 if (membersSec != null) {
@@ -985,27 +1005,26 @@ public class GFactionsPlugin extends JavaPlugin {
                         try {
                             UUID memberUUID = UUID.fromString(uuidStr);
                             FactionRank rank = FactionRank.fromString(membersSec.getString(uuidStr));
-                            faction.getMembersRaw().put(memberUUID, rank); // Use raw put for loading
+                            faction.getMembersRaw().put(memberUUID, rank);
                         } catch (IllegalArgumentException e) {
                             getLogger().warning("Invalid UUID or Rank for member in faction " + nameKey + ": " + uuidStr);
                         }
                     }
                 }
-                faction.updatePowerOnMemberChangeAndLoad(); // Recalculate power based on loaded members
+                faction.updatePowerOnMemberChangeAndLoad();
                 List<String> claimStrings = facSec.getStringList("claimedChunks");
                 for (String s : claimStrings) {
                     ChunkWrapper cw = ChunkWrapper.fromString(s);
                     if (cw != null) {
-                        faction.getAllClaimedChunks_Modifiable().add(cw); // Use modifiable for loading
+                        faction.getAllClaimedChunks_Modifiable().add(cw);
                         claimedChunks.put(cw, nameKey);
                     } else {
                         getLogger().warning("Failed to parse claim string: '" + s + "' for faction " + nameKey);
                     }
                 }
-                // Ensure home chunk is part of allClaimedChunks if home is set
                 if (faction.getHomeChunk() != null && !faction.getClaimedChunks().contains(faction.getHomeChunk())) {
                     faction.getAllClaimedChunks_Modifiable().add(faction.getHomeChunk());
-                    claimedChunks.put(faction.getHomeChunk(), nameKey); // Also add to global map
+                    claimedChunks.put(faction.getHomeChunk(), nameKey);
                 }
 
 
@@ -1020,10 +1039,9 @@ public class GFactionsPlugin extends JavaPlugin {
                         }
                         Outpost outpost = Outpost.deserialize(correctlyTypedMap);
                         if (outpost != null) {
-                            faction.addOutpost(outpost); // This adds to faction's list and allClaimedChunks
-                            // Ensure outpost claims are also in the global map
+                            faction.addOutpost(outpost);
                             outpost.getOutpostSpecificClaims().forEach(cw -> {
-                                faction.getAllClaimedChunks_Modifiable().add(cw); // ensure it's in faction's total
+                                faction.getAllClaimedChunks_Modifiable().add(cw);
                                 claimedChunks.put(cw, nameKey);
                             });
                         }
@@ -1034,7 +1052,7 @@ public class GFactionsPlugin extends JavaPlugin {
 
 
                 if (ENEMY_SYSTEM_ENABLED) {
-                    facSec.getStringList("enemies").forEach(enemyKey -> faction.addEnemy(enemyKey, System.currentTimeMillis())); // Add with current time as placeholder if timestamp missing
+                    facSec.getStringList("enemies").forEach(enemyKey -> faction.addEnemy(enemyKey, System.currentTimeMillis()));
                     ConfigurationSection enemyTimeSec = facSec.getConfigurationSection("enemyDeclareTimestamps");
                     if (enemyTimeSec != null) {
                         for (String enemyKey : enemyTimeSec.getKeys(false)) {
@@ -1042,7 +1060,7 @@ public class GFactionsPlugin extends JavaPlugin {
                         }
                     }
                 }
-                if (ALLY_CHAT_ENABLED) {
+                if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
                     facSec.getStringList("allies").forEach(faction::addAlly);
                 }
 
@@ -1068,7 +1086,7 @@ public class GFactionsPlugin extends JavaPlugin {
                     }
                 }
 
-                faction.lateInitPluginReference(this); // Call late init
+                faction.lateInitPluginReference(this);
                 factionsByNameKey.put(nameKey, faction);
                 faction.getMembers().keySet().forEach(uuid -> playerFactionMembership.put(uuid, nameKey));
             }
@@ -1091,7 +1109,7 @@ public class GFactionsPlugin extends JavaPlugin {
             }
         }
 
-        if (ALLY_CHAT_ENABLED) {
+        if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
             ConfigurationSection allyRequestsSection = dataConfig.getConfigurationSection("pendingAllyRequests");
             if (allyRequestsSection != null) {
                 for (String targetFacKey : allyRequestsSection.getKeys(false)) {
@@ -1121,16 +1139,18 @@ public class GFactionsPlugin extends JavaPlugin {
 
             facSec.set("originalName", faction.getName());
             facSec.set("ownerUUID", faction.getOwnerUUID().toString());
-            if (faction.getHomeLocation() != null) { // Save home location only if it's not null
+            if (faction.getHomeLocation() != null) {
                 facSec.set("homeLocation", faction.getHomeLocation());
             }
             facSec.set("currentPower", faction.getCurrentPower());
             facSec.set("fractionalPower", faction.getAccumulatedFractionalPower());
+            facSec.set("claimLimitOverride", faction.getClaimLimitOverride()); // Save claim limit override
+            facSec.set("pvpProtected", faction.isPvpProtected()); // Save PvP status
+
 
             ConfigurationSection membersSec = facSec.createSection("members");
             faction.getMembers().forEach((uuid, rank) -> membersSec.set(uuid.toString(), rank.name()));
 
-            // Save all unique claimed chunks (including home and outpost claims)
             facSec.set("claimedChunks", faction.getClaimedChunks().stream().map(ChunkWrapper::toString).distinct().collect(Collectors.toList()));
 
             if (OUTPOST_SYSTEM_ENABLED) {
@@ -1143,7 +1163,7 @@ public class GFactionsPlugin extends JavaPlugin {
                 ConfigurationSection enemyTimeSec = facSec.createSection("enemyDeclareTimestamps");
                 faction.getEnemyDeclareTimestamps().forEach((key, time) -> enemyTimeSec.set(key.toLowerCase(), time));
             }
-            if (ALLY_CHAT_ENABLED) {
+            if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
                 facSec.set("allies", new ArrayList<>(faction.getAllyFactionKeys()));
             }
 
@@ -1161,12 +1181,12 @@ public class GFactionsPlugin extends JavaPlugin {
                 invitesMap.forEach((playerUUID, expiry) -> specificInvites.set(playerUUID.toString(), expiry));
             }
         });
-        if (ALLY_CHAT_ENABLED) {
+        if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
             ConfigurationSection allyRequestsSection = dataConfig.createSection("pendingAllyRequests");
             pendingAllyRequests.forEach((targetFacKey, requestsMap) -> {
                 if (!requestsMap.isEmpty()) {
                     ConfigurationSection specificRequests = allyRequestsSection.createSection(targetFacKey);
-                    requestsMap.forEach(specificRequests::set); // Key is requester, value is expiry
+                    requestsMap.forEach(specificRequests::set);
                 }
             });
         }
@@ -1197,7 +1217,7 @@ public class GFactionsPlugin extends JavaPlugin {
     private void saveFactionActivityData() {
         YamlConfiguration activityConfig = new YamlConfiguration();
         ConfigurationSection activitySection = activityConfig.createSection("last_online");
-        factionLastOnlineTime.forEach((key, time) -> activitySection.set(key.toLowerCase(), time)); // Save with lowercase keys
+        factionLastOnlineTime.forEach((key, time) -> activitySection.set(key.toLowerCase(), time));
         try {
             activityConfig.save(factionActivityDataFile);
         } catch (IOException e) {
@@ -1208,10 +1228,8 @@ public class GFactionsPlugin extends JavaPlugin {
 
     public void disbandFactionInternal(Faction factionToDisband, boolean isAdminAction) {
         String nameKey = factionToDisband.getNameKey();
-        // Unclaim all chunks globally
         new HashSet<>(factionToDisband.getClaimedChunks()).forEach(cw -> {
             claimedChunks.remove(cw);
-            // Faction's internal list is cleared when it's no longer referenced or GC'd
         });
         factionsByNameKey.remove(nameKey);
 
@@ -1220,23 +1238,19 @@ public class GFactionsPlugin extends JavaPlugin {
         factionToDisband.getMembers().keySet().forEach(playerUUID -> {
             playerFactionMembership.remove(playerUUID);
             Player p = Bukkit.getPlayer(playerUUID);
-            if (p != null && p.isOnline() && !isAdminAction) { // Don't message if admin action initiated it, admin command will message sender
+            if (p != null && p.isOnline() && !isAdminAction) {
                 p.sendMessage(ChatColor.RED + "Your faction, " + factionToDisband.getName() + ", has been disbanded.");
             }
         });
 
-        // Clean up relations from other factions
         for (Faction otherFac : factionsByNameKey.values()) {
             otherFac.removeAlly(nameKey);
-            otherFac.removeEnemy(nameKey); // This also removes from enemyDeclareTimestamps internally
+            otherFac.removeEnemy(nameKey);
         }
 
-        // Clean up pending invites and requests related to this faction
-        pendingMemberInvites.remove(nameKey); // Invites *sent by* this faction
-        // Invites *to* this faction are implicitly gone as faction is removed
-
-        pendingAllyRequests.remove(nameKey); // Requests *sent to* this faction
-        pendingAllyRequests.values().forEach(map -> map.remove(nameKey)); // Requests *sent by* this faction
+        pendingMemberInvites.remove(nameKey);
+        pendingAllyRequests.remove(nameKey);
+        pendingAllyRequests.values().forEach(map -> map.remove(nameKey));
 
         factionLastOnlineTime.remove(nameKey);
 
@@ -1245,7 +1259,6 @@ public class GFactionsPlugin extends JavaPlugin {
             dynmapManager.removeFactionClaimsFromMap(factionToDisband);
         }
         getLogger().info("Faction " + factionToDisband.getName() + " has been disbanded" + (isAdminAction ? " by an admin." : "."));
-        // Update tab for all former members who are online
         for (UUID memberUUID : membersToUpdateTab) {
             Player onlinePlayer = Bukkit.getPlayer(memberUUID);
             if (onlinePlayer != null && onlinePlayer.isOnline()) {
@@ -1253,7 +1266,7 @@ public class GFactionsPlugin extends JavaPlugin {
             }
         }
 
-        saveFactionsData(); // Save changes after disband
+        saveFactionsData();
         saveFactionActivityData();
     }
 
@@ -1301,17 +1314,17 @@ public class GFactionsPlugin extends JavaPlugin {
     public boolean togglePlayerFactionChat(UUID playerUUID) {
         if (playersInFactionChat.contains(playerUUID)) {
             playersInFactionChat.remove(playerUUID);
-            return false; // Now in public
+            return false;
         } else {
             playersInFactionChat.add(playerUUID);
-            playersInAllyChat.remove(playerUUID); // Ensure not in ally chat
-            return true; // Now in faction chat
+            playersInAllyChat.remove(playerUUID);
+            return true;
         }
     }
     public void setPlayerFactionChat(UUID playerUUID, boolean inFactionChat) {
         if (inFactionChat) {
             playersInFactionChat.add(playerUUID);
-            playersInAllyChat.remove(playerUUID); // Ensure not in ally chat
+            playersInAllyChat.remove(playerUUID);
         } else {
             playersInFactionChat.remove(playerUUID);
         }
@@ -1323,17 +1336,17 @@ public class GFactionsPlugin extends JavaPlugin {
     public boolean togglePlayerAllyChat(UUID playerUUID) {
         if (playersInAllyChat.contains(playerUUID)) {
             playersInAllyChat.remove(playerUUID);
-            return false; // Now in public
+            return false;
         } else {
             playersInAllyChat.add(playerUUID);
-            playersInFactionChat.remove(playerUUID); // Ensure not in faction chat
-            return true; // Now in ally chat
+            playersInFactionChat.remove(playerUUID);
+            return true;
         }
     }
     public void setPlayerAllyChat(UUID playerUUID, boolean inAllyChat) {
         if (inAllyChat) {
             playersInAllyChat.add(playerUUID);
-            playersInFactionChat.remove(playerUUID); // Ensure not in faction chat
+            playersInFactionChat.remove(playerUUID);
         } else {
             playersInAllyChat.remove(playerUUID);
         }
@@ -1360,7 +1373,7 @@ public class GFactionsPlugin extends JavaPlugin {
             player.sendMessage(ChatColor.RED + "You already have an active teleport request.");
             return;
         }
-        if (TELEPORT_WARMUP_SECONDS <= 0) { // No warmup
+        if (TELEPORT_WARMUP_SECONDS <= 0) {
             player.teleport(targetLocation);
             player.sendMessage(successMessage);
             return;
@@ -1368,8 +1381,8 @@ public class GFactionsPlugin extends JavaPlugin {
 
         player.sendMessage(ChatColor.GREEN + "Teleporting in " + TELEPORT_WARMUP_SECONDS + " seconds. Don't move or take damage!");
         int taskId = Bukkit.getScheduler().runTaskLater(this, () -> {
-            TeleportRequest completedRequest = activeTeleportRequests.remove(playerUUID); // Remove before teleporting
-            if (completedRequest != null) { // Check if it wasn't cancelled
+            TeleportRequest completedRequest = activeTeleportRequests.remove(playerUUID);
+            if (completedRequest != null) {
                 player.teleport(targetLocation);
                 if (completedRequest.getTeleportMessage() != null && !completedRequest.getTeleportMessage().isEmpty()){
                     player.sendMessage(completedRequest.getTeleportMessage());
@@ -1382,7 +1395,7 @@ public class GFactionsPlugin extends JavaPlugin {
     }
 
     public void cancelTeleport(UUID playerUUID, @Nullable String cancelMessage) {
-        TeleportRequest request = activeTeleportRequests.remove(playerUUID); // Remove first
+        TeleportRequest request = activeTeleportRequests.remove(playerUUID);
         if (request != null) {
             Bukkit.getScheduler().cancelTask(request.getTaskId());
             Player player = Bukkit.getPlayer(playerUUID);
@@ -1407,7 +1420,7 @@ public class GFactionsPlugin extends JavaPlugin {
 
     public boolean isAnyMemberOnline(Faction faction) {
         if (faction == null) return false;
-        for (UUID memberId : faction.getMemberUUIDsOnly()) { // Use the getter that returns only UUIDs
+        for (UUID memberId : faction.getMemberUUIDsOnly()) {
             Player p = Bukkit.getPlayer(memberId);
             if (p != null && p.isOnline()) {
                 return true;
@@ -1416,56 +1429,43 @@ public class GFactionsPlugin extends JavaPlugin {
         return false;
     }
 
-    /**
-     * Finds unclaimed chunks completely surrounded by the given faction's claims.
-     * Starts a BFS from unclaimed neighbors of the initial chunk.
-     *
-     * @param initialChunk The chunk in the faction's territory from where the fill is initiated.
-     * @param faction      The faction performing the fill.
-     * @return A set of ChunkWrapper objects representing the fillable area, or an empty set.
-     */
     private Set<ChunkWrapper> findSurroundedUnclaimedChunks(Chunk initialChunk, Faction faction) {
         Queue<ChunkWrapper> queue = new LinkedList<>();
-        Set<ChunkWrapper> visitedInBFS = new HashSet<>(); // Chunks visited by BFS, wilderness or not
-        Set<ChunkWrapper> pocket = new HashSet<>();       // Unclaimed chunks part of the potential pocket
+        Set<ChunkWrapper> visitedInBFS = new HashSet<>();
+        Set<ChunkWrapper> pocket = new HashSet<>();
 
         String factionNameKey = faction.getNameKey();
         World world = initialChunk.getWorld();
         String worldName = world.getName();
 
-        int[] dX = {0, 0, 1, -1}; // Cardinal directions
+        int[] dX = {0, 0, 1, -1};
         int[] dZ = {1, -1, 0, 0};
 
-        // 1. Seed the BFS with unclaimed neighbors of the initial chunk.
-        //    The initialChunk itself is claimed by the faction.
         for (int i = 0; i < 4; i++) {
             ChunkWrapper directNeighbor = new ChunkWrapper(worldName, initialChunk.getX() + dX[i], initialChunk.getZ() + dZ[i]);
-            if (!claimedChunks.containsKey(directNeighbor)) { // If it's wilderness (not in global map)
+            if (!claimedChunks.containsKey(directNeighbor)) {
                 queue.offer(directNeighbor);
                 visitedInBFS.add(directNeighbor);
             }
         }
 
-        if (queue.isEmpty()) { // No adjacent wilderness to start filling from
+        if (queue.isEmpty()) {
             return Collections.emptySet();
         }
 
-        // 2. BFS to find the contiguous pocket of wilderness chunks
         int bfsIterations = 0;
         while (!queue.isEmpty() && pocket.size() < CLAIM_FILL_MAX_POCKET_SIZE && bfsIterations < CLAIM_FILL_BFS_LIMIT) {
             ChunkWrapper current = queue.poll();
             bfsIterations++;
 
-            // If current is already claimed by someone else OR already part of another faction's land (should be caught by !claimedChunks.containsKey before adding to queue)
-            // This check is more of a safeguard. We only want to add true wilderness to the pocket.
             if (claimedChunks.containsKey(current)) {
                 continue;
             }
-            pocket.add(current); // Add to our potential pocket
+            pocket.add(current);
 
             for (int i = 0; i < 4; i++) {
                 ChunkWrapper neighbor = new ChunkWrapper(worldName, current.getX() + dX[i], current.getZ() + dZ[i]);
-                if (!visitedInBFS.contains(neighbor) && !claimedChunks.containsKey(neighbor)) { // If neighbor is wilderness and not yet visited by BFS
+                if (!visitedInBFS.contains(neighbor) && !claimedChunks.containsKey(neighbor)) {
                     visitedInBFS.add(neighbor);
                     queue.offer(neighbor);
                 }
@@ -1475,31 +1475,27 @@ public class GFactionsPlugin extends JavaPlugin {
         if (pocket.isEmpty()) return Collections.emptySet();
         if (pocket.size() >= CLAIM_FILL_MAX_POCKET_SIZE) {
             getLogger().warning("[ClaimFill] Pocket size limit reached for " + faction.getName() + ". Size: " + pocket.size());
-            // Return the pocket as is, handleClaimFill will notify player.
             return pocket;
         }
         if (bfsIterations >= CLAIM_FILL_BFS_LIMIT) {
             getLogger().warning("[ClaimFill] BFS iteration limit reached for " + faction.getName() + ". Pocket might be unbounded or too large to process safely.");
-            return Collections.emptySet(); // Indicate failure
+            return Collections.emptySet();
         }
 
-        // 3. Boundary Check: Ensure all chunks bordering the 'pocket' are owned by *this* faction.
         for (ChunkWrapper chunkInPocket : pocket) {
             for (int i = 0; i < 4; i++) {
                 ChunkWrapper boundaryChunk = new ChunkWrapper(worldName, chunkInPocket.getX() + dX[i], chunkInPocket.getZ() + dZ[i]);
-                if (pocket.contains(boundaryChunk)) continue; // This is an internal border within the pocket, skip.
+                if (pocket.contains(boundaryChunk)) continue;
 
                 String ownerOfBoundary = claimedChunks.get(boundaryChunk);
-                // If the boundary is wilderness (ownerOfBoundary == null) or owned by another faction
                 if (ownerOfBoundary == null || !ownerOfBoundary.equals(factionNameKey)) {
-                    return Collections.emptySet(); // Pocket is not fully enclosed by the target faction.
+                    return Collections.emptySet();
                 }
             }
         }
-        return pocket; // All checks passed, this is a valid fillable pocket.
+        return pocket;
     }
 
-    // Placeholder for handleClaimFill logic - FactionCommand calls this
     public void handleClaimFill(Player player, Faction faction) {
         if (!CLAIMFILL_ENABLED) {
             player.sendMessage(ChatColor.RED + "Claimfill is currently disabled.");
@@ -1528,6 +1524,10 @@ public class GFactionsPlugin extends JavaPlugin {
         int claimCostPerChunk = COST_CLAIM_FILL_PER_CHUNK;
         int totalCost = toFill.size() * claimCostPerChunk;
         int maxClaims = faction.getMaxClaimsCalculated(this);
+        if (faction.getClaimLimitOverride() != -1) { // Check for override
+            maxClaims = faction.getClaimLimitOverride();
+        }
+
 
         if (faction.getClaimedChunks().size() + toFill.size() > maxClaims && maxClaims != Integer.MAX_VALUE) {
             player.sendMessage(ChatColor.RED + "Claiming this area (" + toFill.size() + " chunks) would exceed your faction's claim limit of " + maxClaims + ".");
@@ -1542,16 +1542,13 @@ public class GFactionsPlugin extends JavaPlugin {
         int successfullyClaimed = 0;
         for (ChunkWrapper cw : toFill) {
             Chunk chunkToClaim = Bukkit.getWorld(cw.getWorldName()).getChunkAt(cw.getX(), cw.getZ());
-            // Use the main claimChunk method but bypass adjacency checks and use claimfill cost
-            // For simplicity here, directly add claim and deduct power. A more robust solution
-            // might involve a specific claimChunkForFill method.
-            faction.addClaim(cw); // Assumes addClaim doesn't have its own power check here for fill
+            faction.addClaim(cw);
             claimedChunks.put(cw, faction.getNameKey());
             successfullyClaimed++;
         }
 
         if (successfullyClaimed > 0) {
-            faction.removePower(successfullyClaimed * claimCostPerChunk); // Deduct actual cost
+            faction.removePower(successfullyClaimed * claimCostPerChunk);
             player.sendMessage(ChatColor.GREEN + "Successfully filled and claimed " + successfullyClaimed + " chunks for " + (successfullyClaimed * claimCostPerChunk) + " power!");
             updateFactionActivity(faction.getNameKey());
             if (dynmapManager != null && dynmapManager.isEnabled()) {
@@ -1563,7 +1560,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
     }
 
-    // --- New Method for Tab List ---
     public void updatePlayerTabListName(Player player) {
         if (player == null || !player.isOnline()) {
             return;
@@ -1574,25 +1570,20 @@ public class GFactionsPlugin extends JavaPlugin {
 
         if (playerFaction != null) {
             FactionRank rank = playerFaction.getRank(player.getUniqueId());
-            String rankPrefix = "";
-            ChatColor factionColor = ChatColor.GRAY; // Default
-
-            // Determine color based on player's own faction (usually green)
-            // For tab list, we usually just show their own faction.
-            // Relation colors are more for seeing other factions.
+            String rankPrefixString = ""; // For display in tab
+            ChatColor factionColor = ChatColor.GRAY;
 
             if (rank != null) {
                 switch (rank) {
                     case OWNER:
-                        rankPrefix = "**"; // Example rank prefix
+                        rankPrefixString = "**";
                         factionColor = ChatColor.GOLD;
                         break;
                     case ADMIN:
-                        rankPrefix = "*";  // Example rank prefix
+                        rankPrefixString = "*";
                         factionColor = ChatColor.RED;
                         break;
                     case MEMBER:
-                        // No prefix for member or associate, or use a different one
                         factionColor = ChatColor.GREEN;
                         break;
                     case ASSOCIATE:
@@ -1600,29 +1591,19 @@ public class GFactionsPlugin extends JavaPlugin {
                         break;
                 }
             }
-            // Format: [TAG] RankPrefix PlayerName
-            String factionTag = playerFaction.getName().substring(0, Math.min(playerFaction.getName().length(), 4)).toUpperCase(); // Example: first 4 chars as tag
-            prefix = ChatColor.DARK_GRAY + "[" + factionColor + factionTag + ChatColor.DARK_GRAY + "] " + ChatColor.WHITE;
+            String factionTag = playerFaction.getName().substring(0, Math.min(playerFaction.getName().length(), FACTION_TAG_LENGTH)).toUpperCase();
+            prefix = ChatColor.DARK_GRAY + "[" + factionColor + factionTag + ChatColor.DARK_GRAY + "] " + rankPrefixString + factionColor; // Apply faction color to name too
 
-            // You might want to shorten the player name if the prefix + name exceeds tab list limits
             String baseName = player.getName();
-            // Max length for player list name is 16 (historically).
-            // Modern versions might support more with components, but String setPlayerListName is safer with 16.
-            // For simplicity, this example doesn't aggressively shorten.
-            player.setPlayerListName(prefix + rankPrefix + baseName);
+            player.setPlayerListName(prefix + baseName + ChatColor.RESET);
 
         } else {
-            // No faction, reset to default name (or let other plugins handle it)
             if (player.getPlayerListName() != null && !player.getPlayerListName().equals(player.getName())) {
-                // Only reset if it was previously changed by this plugin (heuristic)
-                // This part is tricky without knowing what other plugins might do.
-                // A common strategy is to only set if in faction, and on leave, set back to player.getName().
                 player.setPlayerListName(player.getName());
             }
         }
     }
 
-    // --- Getter for Power Decay Task ---
     @Nullable
     public BukkitTask getPowerDecayTask() {
         return powerDecayTask;

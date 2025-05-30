@@ -30,7 +30,7 @@ public class Faction {
     private final List<Outpost> outposts;
 
     private int currentPower;
-    private double accumulatedFractionalPower = 0.0; // For fractional power regeneration
+    private double accumulatedFractionalPower = 0.0;
     private final Set<String> enemyFactionKeys;
     private final Set<String> allyFactionKeys;
     private final Map<String, Long> enemyDeclareTimestamps;
@@ -38,7 +38,9 @@ public class Faction {
     private Inventory vault;
     public static final int VAULT_SIZE = 27;
 
-    private long lastOnlineTime; // For power decay
+    private long lastOnlineTime;
+    private int claimLimitOverride = -1;
+    private boolean pvpProtected;
 
     private transient GFactionsPlugin plugin;
 
@@ -69,7 +71,8 @@ public class Faction {
         if (this.plugin != null && this.plugin.VAULT_SYSTEM_ENABLED) {
             this.vault = Bukkit.createInventory(null, VAULT_SIZE, ChatColor.DARK_AQUA + this.originalName + " Vault");
         }
-        this.lastOnlineTime = System.currentTimeMillis(); // Set on creation
+        this.lastOnlineTime = System.currentTimeMillis();
+        this.pvpProtected = (this.plugin != null) ? this.plugin.PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT : false;
         updatePowerOnMemberChangeAndLoad();
     }
 
@@ -92,14 +95,21 @@ public class Faction {
                 outpost.setOutpostID(i + 1);
                 Location outpostSpawn = outpost.getOutpostSpawnLocation();
                 if (outpostSpawn == null && plugin != null) {
-                    plugin.getLogger().warning("Outpost " + outpost.getOutpostID() + " for faction " + getName() + " has an invalid spawn location (world not loaded).");
+                    plugin.getLogger().warning("Outpost " + outpost.getOutpostID() + " for faction " + getName() + " has an invalid spawn location (world not loaded or location data missing).");
                 }
             }
-            if (this.vault == null && this.plugin != null && this.plugin.VAULT_SYSTEM_ENABLED) { // Initialize vault if it wasn't due to plugin ref
+            if (this.vault == null && this.plugin != null && this.plugin.VAULT_SYSTEM_ENABLED) {
                 this.vault = Bukkit.createInventory(null, VAULT_SIZE, ChatColor.DARK_AQUA + this.originalName + " Vault");
+            }
+            if (this.plugin != null && !wasPvpStatusLoadedFromConfig()) {
+                this.pvpProtected = this.plugin.PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT;
             }
             updatePowerOnMemberChangeAndLoad();
         }
+    }
+
+    private boolean wasPvpStatusLoadedFromConfig() {
+        return this.plugin != null; // Simplified check
     }
 
     // --- Getters ---
@@ -107,7 +117,7 @@ public class Faction {
     public String getNameKey() { return nameKey; }
     public UUID getOwnerUUID() { return ownerUUID; }
     public Map<UUID, FactionRank> getMembers() { return Collections.unmodifiableMap(members); }
-    public Map<UUID, FactionRank> getMembersRaw() { return members; } // For internal modification during load
+    public Map<UUID, FactionRank> getMembersRaw() { return members; }
     public Set<UUID> getMemberUUIDsOnly() { return Collections.unmodifiableSet(members.keySet()); }
     @Nullable public FactionRank getRank(UUID playerUUID) { return members.get(playerUUID); }
 
@@ -133,30 +143,41 @@ public class Faction {
     @Nullable public ChunkWrapper getHomeChunk() { return homeChunk; }
 
     public int getCurrentPower() { return currentPower; }
-    public int getMaxPowerCalculated(GFactionsPlugin pluginInstance) { // Renamed and takes plugin instance
-        if (pluginInstance == null && this.plugin == null) return Math.max(1, members.size()) * 100; // Fallback
+    public int getClaimLimitOverride() { return claimLimitOverride; }
+    public boolean isPvpProtected() { return pvpProtected; }
+
+    public int getMaxPowerCalculated(GFactionsPlugin pluginInstance) {
         GFactionsPlugin currentPlugin = (this.plugin != null) ? this.plugin : pluginInstance;
+        if (currentPlugin == null) return Math.max(1, members.size()) * 100;
         return Math.max(1, members.size()) * currentPlugin.POWER_PER_MEMBER_BONUS;
     }
 
     public double getAccumulatedFractionalPower() { return accumulatedFractionalPower; }
-    public void addFractionalPower(double amount) { this.accumulatedFractionalPower += amount; }
-    public void resetFractionalPower(double remainder) { this.accumulatedFractionalPower = remainder; }
-
+    public void addFractionalPower(double amount) {
+        this.accumulatedFractionalPower += amount;
+    }
+    public void resetFractionalPower(double remainder) {
+        this.accumulatedFractionalPower = remainder;
+    }
+    // Added setter for loading data
+    public void setAccumulatedFractionalPower(double amount) {
+        this.accumulatedFractionalPower = amount;
+    }
 
     public Set<String> getEnemyFactionKeys() { return Collections.unmodifiableSet(enemyFactionKeys); }
     public Set<String> getAllyFactionKeys() { return Collections.unmodifiableSet(allyFactionKeys); }
     public Map<String, Long> getEnemyDeclareTimestamps() { return Collections.unmodifiableMap(enemyDeclareTimestamps); }
+    public Map<String, Long> getEnemyDeclareTimestampsInternal() { return enemyDeclareTimestamps; }
+
     public Set<UUID> getTrustedPlayers() { return Collections.unmodifiableSet(trustedPlayers); }
     public Inventory getVault() {
-        if (vault == null && plugin != null && plugin.VAULT_SYSTEM_ENABLED) { // Lazy init if needed
+        if (vault == null && plugin != null && plugin.VAULT_SYSTEM_ENABLED) {
             this.vault = Bukkit.createInventory(null, VAULT_SIZE, ChatColor.DARK_AQUA + this.originalName + " Vault");
         }
         return vault;
     }
     public List<Outpost> getOutposts() { return Collections.unmodifiableList(outposts); }
     public long getLastOnlineTime() { return lastOnlineTime; }
-
 
     // --- Setters & Modifiers ---
     public void setOwnerUUID(UUID newOwnerUUID) {
@@ -165,6 +186,14 @@ public class Faction {
         }
         this.ownerUUID = newOwnerUUID;
         members.put(newOwnerUUID, FactionRank.OWNER);
+        if (plugin != null) plugin.updateFactionActivity(this.nameKey);
+    }
+    public void setClaimLimitOverride(int limit) {
+        this.claimLimitOverride = Math.max(-1, limit);
+        if (plugin != null) plugin.updateFactionActivity(this.nameKey);
+    }
+    public void setPvpProtected(boolean pvpProtected) {
+        this.pvpProtected = pvpProtected;
         if (plugin != null) plugin.updateFactionActivity(this.nameKey);
     }
 
@@ -198,20 +227,20 @@ public class Faction {
                 Location outpostSpawn = firstOutpost.getOutpostSpawnLocation();
                 if (outpostSpawn != null && outpostSpawn.getWorld() != null) {
                     setHomeLocation(outpostSpawn);
-                    allClaimedChunks.removeAll(firstOutpost.getOutpostSpecificClaims());
+                    allClaimedChunks.addAll(firstOutpost.getOutpostSpecificClaims());
                     outposts.remove(firstOutpost);
                     for(int i=0; i<outposts.size(); i++){ outposts.get(i).setOutpostID(i+1); }
                     plugin.getLogger().info("Faction " + getName() + " home relocated to former outpost at " + firstOutpost.getSpawnChunk().toStringShort());
                     broadcastMessage(ChatColor.YELLOW + "Your faction's home was lost. Outpost #" + firstOutpost.getOutpostID() + " has become your new faction home.", null);
-                    plugin.updateFactionActivity(this.nameKey);
+                    if (plugin != null) plugin.updateFactionActivity(this.nameKey);
                     return;
                 }
             }
-            plugin.getLogger().warning("Faction " + getName() + " lost its home and has no other claims to relocate to.");
+            plugin.getLogger().warning("Faction " + getName() + " lost its home and has no other claims or valid outposts to relocate to.");
             this.homeLocation = null;
             this.homeChunk = null;
             broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "Your faction's home was lost and no land was found to relocate it! You MUST set a new home with /f sethome.", null);
-            plugin.updateFactionActivity(this.nameKey);
+            if (plugin != null) plugin.updateFactionActivity(this.nameKey);
             return;
         }
 
@@ -255,7 +284,6 @@ public class Faction {
         return new Location(world, cx + 0.5, world.getHighestBlockYAt(cx, cz) + 1.0, cz + 0.5);
     }
 
-
     public void setCurrentPower(int power) {
         this.currentPower = Math.max(0, Math.min(power, getMaxPowerCalculated(this.plugin)));
         if (plugin != null) plugin.updateFactionActivity(this.nameKey);
@@ -266,11 +294,9 @@ public class Faction {
     public void removePower(int amount) {
         setCurrentPower(this.currentPower - amount);
     }
-    public void setAccumulatedFractionalPower(double fractionalPower) { this.accumulatedFractionalPower = fractionalPower; }
-
 
     public void updatePowerOnMemberChangeAndLoad() {
-        if (plugin == null) return; // Cannot calculate max power without plugin reference
+        if (plugin == null) return;
         int newMaxPower = getMaxPowerCalculated(plugin);
         if (members.size() == 1 && members.containsKey(ownerUUID) && members.get(ownerUUID) == FactionRank.OWNER) {
             this.currentPower = Math.min(plugin.POWER_INITIAL, newMaxPower);
@@ -282,15 +308,6 @@ public class Faction {
 
     public boolean addMember(UUID memberUUID, FactionRank rank) {
         if (members.containsKey(memberUUID)) return false;
-        // Max members check (plugin.MAX_MEMBERS_PER_FACTION from GFactionsPlugin is now 0 for unlimited by default)
-        // This check might be better placed in FactionCommand or GFactionsPlugin before calling addMember
-        // to provide immediate feedback to the inviter/accepter.
-        // For now, let's assume GFactionsPlugin.MAX_MEMBERS_PER_FACTION is the total size limit.
-        if (plugin != null && plugin.CLAIMS_PER_MEMBER_BONUS > 0) { // Check against the config that implies member limits matter
-            // If MAX_MEMBERS_PER_FACTION config is added, use it here.
-            // For now, let's assume no hard cap here, but FactionCommand should check before inviting.
-        }
-
         members.put(memberUUID, rank);
         updatePowerOnMemberChangeAndLoad();
         if (plugin != null) plugin.updateFactionActivity(this.nameKey);
@@ -309,16 +326,15 @@ public class Faction {
 
     public boolean promotePlayer(UUID memberUUID, FactionRank newRank) {
         if (!members.containsKey(memberUUID) || members.get(memberUUID) == FactionRank.OWNER) {
-            return false; // Not a member or is owner
+            return false;
         }
         FactionRank currentRank = members.get(memberUUID);
-        if (newRank.ordinal() <= currentRank.ordinal() && newRank != FactionRank.ADMIN) { // Cannot promote to same or lower, unless specifically to ADMIN (e.g. from Member to Admin)
-            if(!(currentRank == FactionRank.MEMBER && newRank == FactionRank.ADMIN) && !(currentRank == FactionRank.ASSOCIATE && newRank.isMemberOrHigher())) {
-                return false; // Invalid promotion path
+        if (newRank.ordinal() <= currentRank.ordinal() || newRank == FactionRank.OWNER) {
+            if (!((currentRank == FactionRank.ASSOCIATE && (newRank == FactionRank.MEMBER || newRank == FactionRank.ADMIN)) ||
+                    (currentRank == FactionRank.MEMBER && newRank == FactionRank.ADMIN))) {
+                return false;
             }
         }
-        if (newRank == FactionRank.OWNER) return false; // Must use /f leader
-
         members.put(memberUUID, newRank);
         if (plugin != null) plugin.updateFactionActivity(this.nameKey);
         return true;
@@ -326,19 +342,16 @@ public class Faction {
 
     public boolean demotePlayer(UUID memberUUID, FactionRank newRank) {
         if (!members.containsKey(memberUUID) || members.get(memberUUID) == FactionRank.OWNER) {
-            return false; // Not a member or is owner
+            return false;
         }
         FactionRank currentRank = members.get(memberUUID);
-        if (newRank.ordinal() >= currentRank.ordinal()) {
-            return false; // Cannot demote to same or higher
+        if (newRank.ordinal() >= currentRank.ordinal() || newRank == FactionRank.OWNER) {
+            return false;
         }
-        if (newRank == FactionRank.OWNER) return false; // Cannot demote to owner
-
         members.put(memberUUID, newRank);
         if (plugin != null) plugin.updateFactionActivity(this.nameKey);
         return true;
     }
-
 
     public void addClaim(ChunkWrapper chunkWrapper, boolean isOutpostClaimHint, @Nullable Outpost specificOutpost) {
         this.allClaimedChunks.add(chunkWrapper);
@@ -384,7 +397,6 @@ public class Faction {
             }
         }
 
-
         if (plugin != null && chunkWrapper.equals(this.homeChunk)) {
             plugin.getLogger().info("Home chunk " + chunkWrapper.toStringShort() + " for faction " + getName() + " is being lost. Relocating home...");
             relocateHomeToRandomClaim();
@@ -392,7 +404,6 @@ public class Faction {
         checkForAndHandleTerritoryMerge();
         if (plugin != null) plugin.updateFactionActivity(this.nameKey);
     }
-
 
     public boolean isConnectedToAnySpawnPoint(ChunkWrapper targetChunk) {
         if (allClaimedChunks.isEmpty()) return false;
@@ -402,7 +413,6 @@ public class Faction {
                 if (targetChunk.equals(outpost.getSpawnChunk())) return true;
             }
         }
-
 
         Queue<ChunkWrapper> queue = new LinkedList<>();
         Set<ChunkWrapper> visited = new HashSet<>();
@@ -421,11 +431,9 @@ public class Faction {
             }
         }
 
-
         if (queue.isEmpty() && !allClaimedChunks.isEmpty()) {
             return false;
         }
-
 
         while (!queue.isEmpty()) {
             ChunkWrapper current = queue.poll();
@@ -444,7 +452,6 @@ public class Faction {
         }
         return false;
     }
-
 
     public boolean isChunkAdjacentToExistingClaim(ChunkWrapper targetChunk) {
         if (allClaimedChunks.isEmpty()) return true;
@@ -476,7 +483,6 @@ public class Faction {
         }
         return null;
     }
-
 
     public boolean isChunkAdjacentTo(ChunkWrapper target, Set<ChunkWrapper> territoryClaims) {
         if (territoryClaims.isEmpty()) return false;
@@ -521,7 +527,7 @@ public class Faction {
     }
 
     public void checkForAndHandleTerritoryMerge() {
-        if (homeChunk == null || plugin == null || !plugin.OUTPOST_SYSTEM_ENABLED) return;
+        if (homeChunk == null || plugin == null || !plugin.OUTPOST_SYSTEM_ENABLED || outposts.isEmpty()) return;
 
         Set<ChunkWrapper> mainHomeTerritory = getClaimsConnectedTo(homeChunk);
 
@@ -549,7 +555,6 @@ public class Faction {
             if (plugin != null) plugin.updateFactionActivity(this.nameKey);
         }
     }
-
 
     // --- Membership & Roles ---
     public boolean isOwner(UUID playerUUID) { return playerUUID.equals(this.ownerUUID); }
@@ -596,18 +601,18 @@ public class Faction {
     }
 
     public boolean isAlly(String otherFactionKey) {
-        if (plugin == null || !plugin.ALLY_CHAT_ENABLED) return false; // Assuming ally system tied to ally chat
+        if (plugin == null || !plugin.ALLY_CHAT_ENABLED || !plugin.ENEMY_SYSTEM_ENABLED) return false;
         return allyFactionKeys.contains(otherFactionKey.toLowerCase());
     }
     public void addAlly(String otherFactionKey) {
-        if (plugin == null || !plugin.ALLY_CHAT_ENABLED) return;
+        if (plugin == null || !plugin.ALLY_CHAT_ENABLED || !plugin.ENEMY_SYSTEM_ENABLED) return;
         String keyLC = otherFactionKey.toLowerCase();
         if (isEnemy(keyLC)) return;
         allyFactionKeys.add(keyLC);
         if (plugin != null) plugin.updateFactionActivity(this.nameKey);
     }
     public boolean removeAlly(String otherFactionKey) {
-        if (plugin == null || !plugin.ALLY_CHAT_ENABLED) return false;
+        if (plugin == null || !plugin.ALLY_CHAT_ENABLED || !plugin.ENEMY_SYSTEM_ENABLED) return false;
         boolean removed = allyFactionKeys.remove(otherFactionKey.toLowerCase());
         if (removed && plugin != null) plugin.updateFactionActivity(this.nameKey);
         return removed;
@@ -669,7 +674,7 @@ public class Faction {
         if (plugin != null) {
             for (ChunkWrapper cw : new HashSet<>(outpostToRemove.getOutpostSpecificClaims())) {
                 allClaimedChunks.remove(cw);
-                plugin.getClaimedChunksMapInternal().remove(cw); // Use internal modifiable map
+                plugin.getClaimedChunksMapInternal().remove(cw);
             }
         } else {
             allClaimedChunks.removeAll(outpostToRemove.getOutpostSpecificClaims());
@@ -724,7 +729,6 @@ public class Faction {
 
     public void setLastOnlineTime(long lastOnlineTime) { this.lastOnlineTime = lastOnlineTime; }
 
-
     public void broadcastMessage(String message, @Nullable UUID excludePlayerUUID) {
         if (message == null || message.isEmpty()) return;
         for (UUID memberUUID : members.keySet()) {
@@ -737,7 +741,6 @@ public class Faction {
             }
         }
     }
-
 
     @Override
     public boolean equals(Object o) {
@@ -752,13 +755,17 @@ public class Faction {
         return Objects.hash(nameKey);
     }
 
-    // New method to get max claims based on plugin config
     public int getMaxClaimsCalculated(GFactionsPlugin pluginInstance) {
         GFactionsPlugin currentPlugin = (this.plugin != null) ? this.plugin : pluginInstance;
-        if (currentPlugin == null || currentPlugin.BASE_CLAIM_LIMIT <= 0) { // 0 or less means unlimited
-            return Integer.MAX_VALUE; // Effectively unlimited
+        if (currentPlugin == null) return Integer.MAX_VALUE;
+
+        if (this.claimLimitOverride != -1) {
+            return this.claimLimitOverride == 0 ? Integer.MAX_VALUE : this.claimLimitOverride;
+        }
+
+        if (currentPlugin.BASE_CLAIM_LIMIT <= 0) {
+            return Integer.MAX_VALUE;
         }
         return currentPlugin.BASE_CLAIM_LIMIT + (Math.max(0, members.size() -1) * currentPlugin.CLAIMS_PER_MEMBER_BONUS);
-        // Or if owner also counts for bonus: members.size() * CLAIMS_PER_MEMBER_BONUS
     }
 }

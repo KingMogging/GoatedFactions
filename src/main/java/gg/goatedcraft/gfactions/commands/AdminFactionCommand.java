@@ -60,6 +60,10 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
                 if (args.length < 3) { sender.sendMessage(ChatColor.RED + "Usage: /fa setpower <factionName> <amount>"); return true; }
                 handleSetPower(sender, args[1], args[2]);
                 break;
+            case "setclaimlimit": // New command
+                if (args.length < 3) { sender.sendMessage(ChatColor.RED + "Usage: /fa setclaimlimit <factionName> <limit|-1 for default>"); return true; }
+                handleSetClaimLimit(sender, args[1], args[2]);
+                break;
             case "unclaim":
                 if (args.length < 2) {
                     sender.sendMessage(ChatColor.RED + "Usage: /fa unclaim <all <factionName>|current [factionName]>");
@@ -89,20 +93,16 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
                 handleAdminVault((Player) sender, args[1]);
                 break;
             case "reloadconfig":
-                plugin.reloadConfig(); // Bukkit's method to reload config.yml from disk
-                plugin.loadPluginConfig(); // Your custom method to parse and apply these values
+                plugin.reloadConfig();
+                plugin.loadPluginConfig();
 
-                // Re-initialize tasks that depend on config values
-                // It's better to run this slightly delayed if other parts of reloadConfig also schedule tasks
-                // or if loadPluginConfig itself makes Bukkit API calls that are sensitive to plugin state.
-                // For now, direct call is fine.
-                plugin.startPowerRegeneration(); // Re-starts with new config values
+                plugin.startPowerRegeneration();
 
-                BukkitTask currentPowerDecayTask = plugin.getPowerDecayTask(); // Get the current task
+                BukkitTask currentPowerDecayTask = plugin.getPowerDecayTask();
                 if (plugin.POWER_DECAY_ENABLED) {
-                    plugin.startPowerDecayTask(); // Re-starts with new config values, potentially replacing old task
+                    plugin.startPowerDecayTask();
                 } else if (currentPowerDecayTask != null && !currentPowerDecayTask.isCancelled()) {
-                    currentPowerDecayTask.cancel(); // Stop if disabled and task was running
+                    currentPowerDecayTask.cancel();
                 }
                 sender.sendMessage(ChatColor.GREEN + plugin.getName() + " configuration reloaded and applied. Tasks depending on config have been reset.");
                 break;
@@ -111,9 +111,9 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
                 if (plugin.DYNMAP_ENABLED && plugin.getDynmapManager() != null) {
                     if (!plugin.getDynmapManager().isEnabled()) {
                         sender.sendMessage(ChatColor.YELLOW + "Dynmap integration was not active. Attempting to reactivate...");
-                        plugin.getDynmapManager().activate(); // Try to activate if not already
+                        plugin.getDynmapManager().activate();
                     }
-                    if (plugin.getDynmapManager().isEnabled()) { // Check again after attempting activation
+                    if (plugin.getDynmapManager().isEnabled()) {
                         plugin.getDynmapManager().updateAllFactionClaimsVisuals();
                         sender.sendMessage(ChatColor.GREEN + "Dynmap faction claims visuals reprocessed.");
                     } else {
@@ -134,10 +134,8 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         Faction faction = plugin.getFaction(factionName);
         if (faction == null) { sender.sendMessage(ChatColor.RED + "Faction '" + factionName + "' not found."); return; }
 
-        // No need to get members here as disbandFactionInternal will handle tab updates
-        plugin.disbandFactionInternal(faction, true); // true for isAdminAction
+        plugin.disbandFactionInternal(faction, true);
         sender.sendMessage(ChatColor.GREEN + "Faction '" + faction.getName() + "' has been forcefully deleted.");
-        // Tab list updates are handled in disbandFactionInternal via updatePlayerTabListName
     }
 
     private void handleAddPower(CommandSender sender, String factionName, String amountStr) {
@@ -148,9 +146,9 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         catch (NumberFormatException e) { sender.sendMessage(ChatColor.RED + "Invalid amount: '" + amountStr + "'. Must be a whole number."); return; }
 
         int oldPower = faction.getCurrentPower();
-        faction.addPower(amount); // setCurrentPower (called by addPower) already caps it by max power
-        plugin.updateFactionActivity(faction.getNameKey()); // Mark activity
-        plugin.saveFactionsData(); // Save changes
+        faction.addPower(amount);
+        plugin.updateFactionActivity(faction.getNameKey());
+        plugin.saveFactionsData();
         sender.sendMessage(ChatColor.GREEN + "Modified power for '" + faction.getName() + "'. Old: " + oldPower + ", New: " + faction.getCurrentPower() + "/" + faction.getMaxPowerCalculated(plugin));
         if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()) {
             plugin.getDynmapManager().updateFactionAppearance(faction);
@@ -163,10 +161,10 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         int amount;
         try { amount = Integer.parseInt(amountStr); }
         catch (NumberFormatException e) { sender.sendMessage(ChatColor.RED + "Invalid amount: '" + amountStr + "'. Must be a whole number."); return; }
-        if (amount < 0) { sender.sendMessage(ChatColor.RED + "Power cannot be negative."); return; } // Though setCurrentPower handles min 0
+        if (amount < 0) { sender.sendMessage(ChatColor.RED + "Power cannot be negative."); return; }
 
         int oldPower = faction.getCurrentPower();
-        faction.setCurrentPower(amount); // This already caps it by max power and min 0
+        faction.setCurrentPower(amount);
         plugin.updateFactionActivity(faction.getNameKey());
         plugin.saveFactionsData();
         sender.sendMessage(ChatColor.GREEN + "Set power of '" + faction.getName() + "' to " + faction.getCurrentPower() + "/" + faction.getMaxPowerCalculated(plugin) + " (was " + oldPower + ")");
@@ -174,6 +172,38 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
             plugin.getDynmapManager().updateFactionAppearance(faction);
         }
     }
+
+    private void handleSetClaimLimit(CommandSender sender, String factionName, String limitStr) {
+        Faction faction = plugin.getFaction(factionName);
+        if (faction == null) {
+            sender.sendMessage(ChatColor.RED + "Faction '" + factionName + "' not found.");
+            return;
+        }
+        int limit;
+        try {
+            limit = Integer.parseInt(limitStr);
+        } catch (NumberFormatException e) {
+            sender.sendMessage(ChatColor.RED + "Invalid limit: '" + limitStr + "'. Must be a whole number (use -1 for default calculation, 0 for unlimited).");
+            return;
+        }
+
+        faction.setClaimLimitOverride(limit);
+        plugin.saveFactionsData(); // Save the change
+
+        String limitDisplay;
+        if (limit == -1) {
+            limitDisplay = "default calculation (" + faction.getMaxClaimsCalculated(plugin) + ")";
+        } else if (limit == 0) {
+            limitDisplay = "unlimited";
+        } else {
+            limitDisplay = String.valueOf(limit);
+        }
+        sender.sendMessage(ChatColor.GREEN + "Claim limit for faction '" + faction.getName() + "' set to " + limitDisplay + ".");
+        if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()) {
+            plugin.getDynmapManager().updateFactionAppearance(faction); // Update Dynmap as claim limit might be in description
+        }
+    }
+
 
     private void handleUnclaim(CommandSender sender, String type, @Nullable String factionNameForUnclaim) {
         if (type.equalsIgnoreCase("all")) {
@@ -184,7 +214,6 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
             int initialClaimCount = faction.getClaimedChunks().size();
             if (initialClaimCount == 0) { sender.sendMessage(ChatColor.YELLOW + faction.getName() + " has no chunks to unclaim."); return; }
 
-            // Create a new list to avoid ConcurrentModificationException as faction.removeClaim modifies the set
             new ArrayList<>(faction.getClaimedChunks()).forEach(plugin::unclaimChunkAdmin);
             sender.sendMessage(ChatColor.GREEN + "All " + initialClaimCount + " chunks for '" + faction.getName() + "' have been admin-unclaimed.");
         } else if (type.equalsIgnoreCase("current")) {
@@ -198,13 +227,12 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
             if (ownerKey == null) { sender.sendMessage(ChatColor.RED + "The current chunk ("+cw.toStringShort()+") is not claimed."); return; }
 
             Faction chunkOwner = plugin.getFaction(ownerKey);
-            if (chunkOwner == null) { // Should ideally not happen if ownerKey is not null
-                plugin.unclaimChunkAdmin(cw); // Force unclaim
+            if (chunkOwner == null) {
+                plugin.unclaimChunkAdmin(cw);
                 sender.sendMessage(ChatColor.YELLOW + "Chunk ("+cw.toStringShort()+") was claimed by an unknown/ghost faction. It has been forcibly unclaimed.");
                 return;
             }
 
-            // If a faction name is specified, verify it's the correct one before unclaiming
             if (factionNameForUnclaim != null && !chunkOwner.getNameKey().equalsIgnoreCase(factionNameForUnclaim.toLowerCase())) {
                 sender.sendMessage(ChatColor.RED + "Current chunk ("+cw.toStringShort()+") is owned by '" + chunkOwner.getName() + "', not '" + factionNameForUnclaim + "'.");
                 return;
@@ -223,7 +251,7 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
             adminPlayer.sendMessage(ChatColor.RED + "Faction '" + factionName + "' not found.");
             return;
         }
-        if (targetFaction.getVault() == null) { // Vault might be null if disabled or error during init
+        if (targetFaction.getVault() == null) {
             adminPlayer.sendMessage(ChatColor.RED + "Faction '" + targetFaction.getName() + "' does not have a vault (possibly disabled or an error).");
             return;
         }
@@ -237,6 +265,7 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.GOLD + "/fa deletefaction <name>" + ChatColor.GRAY + " - Deletes faction (alias: /fa disband).");
         sender.sendMessage(ChatColor.GOLD + "/fa addpower <name> <amt>" + ChatColor.GRAY + " - Adds power (capped by max).");
         sender.sendMessage(ChatColor.GOLD + "/fa setpower <name> <amt>" + ChatColor.GRAY + " - Sets exact power (capped by max, min 0).");
+        sender.sendMessage(ChatColor.GOLD + "/fa setclaimlimit <name> <limit>" + ChatColor.GRAY + " - Sets claim limit (-1 for default, 0 for unlimited).");
         sender.sendMessage(ChatColor.GOLD + "/fa unclaim all <name>" + ChatColor.GRAY + " - Unclaims all land for specified faction.");
         sender.sendMessage(ChatColor.GOLD + "/fa unclaim current [name]" + ChatColor.GRAY + " - Unclaims current chunk (optionally verify owner).");
         sender.sendMessage(ChatColor.GOLD + "/fa vault <name>" + ChatColor.GRAY + " - Opens the specified faction's vault.");
@@ -251,13 +280,13 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
         String currentArg = args[args.length - 1].toLowerCase();
 
         if (args.length == 1) {
-            List<String> subCommands = Arrays.asList("help", "deletefaction", "disband", "addpower", "setpower", "unclaim", "vault", "reloadconfig", "dynmapreload", "dynmaprefresh");
+            List<String> subCommands = Arrays.asList("help", "deletefaction", "disband", "addpower", "setpower", "setclaimlimit", "unclaim", "vault", "reloadconfig", "dynmapreload", "dynmaprefresh");
             subCommands.stream()
                     .filter(s -> s.startsWith(currentArg))
                     .forEach(completions::add);
         } else if (args.length == 2) {
             String subCmd = args[0].toLowerCase();
-            if (Arrays.asList("deletefaction", "disband", "addpower", "setpower", "vault").contains(subCmd)) {
+            if (Arrays.asList("deletefaction", "disband", "addpower", "setpower", "vault", "setclaimlimit").contains(subCmd)) {
                 plugin.getFactionsByNameKey().values().stream()
                         .map(Faction::getName)
                         .filter(fName -> fName != null && fName.toLowerCase().startsWith(currentArg))
@@ -272,13 +301,15 @@ public class AdminFactionCommand implements CommandExecutor, TabCompleter {
             String secondArg = args[1].toLowerCase();
 
             if (subCmd.equals("unclaim") && (secondArg.equals("all") || secondArg.equals("current"))) {
-                // For "unclaim all <factionName>" or "unclaim current <factionName>"
                 plugin.getFactionsByNameKey().values().stream()
                         .map(Faction::getName)
                         .filter(fName -> fName != null && fName.toLowerCase().startsWith(currentArg))
                         .forEach(completions::add);
+            } else if (subCmd.equals("setclaimlimit")) {
+                // No specific suggestions for the limit number, but could add "-1", "0"
+                if ("-1".startsWith(currentArg)) completions.add("-1");
+                if ("0".startsWith(currentArg)) completions.add("0");
             }
-            // No specific suggestions for power amount args[2] in addpower/setpower
         }
         completions.sort(String.CASE_INSENSITIVE_ORDER);
         return completions.stream().distinct().collect(Collectors.toList());
