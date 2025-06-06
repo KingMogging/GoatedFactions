@@ -6,7 +6,8 @@ import gg.goatedcraft.gfactions.data.FactionRank;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
-import org.bukkit.Location; // Added missing import
+import org.bukkit.Location;
+// Added missing import
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
@@ -30,7 +31,6 @@ import java.util.logging.Level;
 public class ZoneProtectionListener implements Listener {
 
     private final GFactionsPlugin plugin;
-
     private static final Set<Material> MEMBER_PLUS_INTERACT_ONLY_MATERIALS = new HashSet<>(Arrays.asList(
             Material.CHEST, Material.TRAPPED_CHEST, Material.FURNACE, Material.BLAST_FURNACE, Material.SMOKER,
             Material.BARREL, Material.SHULKER_BOX, Material.DISPENSER, Material.DROPPER, Material.HOPPER,
@@ -38,7 +38,6 @@ public class ZoneProtectionListener implements Listener {
             Material.ANVIL, Material.CHIPPED_ANVIL, Material.DAMAGED_ANVIL,
             Material.ENCHANTING_TABLE, Material.ENDER_CHEST
     ));
-
     private static final Set<Material> ASSOCIATE_ALLOWED_INTERACT_MATERIALS = new HashSet<>(Arrays.asList(
             Material.OAK_DOOR, Material.SPRUCE_DOOR, Material.BIRCH_DOOR, Material.JUNGLE_DOOR,
             Material.ACACIA_DOOR, Material.DARK_OAK_DOOR, Material.MANGROVE_DOOR, Material.CHERRY_DOOR, Material.BAMBOO_DOOR,
@@ -55,8 +54,6 @@ public class ZoneProtectionListener implements Listener {
             Material.CRIMSON_BUTTON, Material.WARPED_BUTTON, Material.POLISHED_BLACKSTONE_BUTTON,
             Material.NOTE_BLOCK
     ));
-
-
     public ZoneProtectionListener(GFactionsPlugin plugin) {
         this.plugin = plugin;
     }
@@ -66,7 +63,6 @@ public class ZoneProtectionListener implements Listener {
         if (owningFaction == null) return true; // Wilderness
 
         Faction playerFaction = plugin.getFactionByPlayer(player.getUniqueId());
-
         if (playerFaction != null && playerFaction.equals(owningFaction)) {
             FactionRank rank = playerFaction.getRank(player.getUniqueId());
             if (rank == null) return false;
@@ -103,12 +99,14 @@ public class ZoneProtectionListener implements Listener {
                 return false;
             }
             World world = Bukkit.getWorlds().get(0);
-            Location tempLoc = new Location(world, 0, world.getMinHeight() + 64, 0); // Ensure Location is org.bukkit.Location
+            Location tempLoc = new Location(world, 0, world.getMinHeight() + 64, 0);
+            // Ensure Location is org.bukkit.Location
 
             // Check if the chunk is loaded before getting the block to avoid loading it.
             // However, for a simple type check, this might be less critical than for operations that cause updates.
             // Block block = world.getBlockAt(tempLoc.getBlockX(), tempLoc.getBlockY(), tempLoc.getBlockZ()); // Alternative way to get block
-            Block block = tempLoc.getBlock(); // Simpler way to get block from Location
+            Block block = tempLoc.getBlock();
+            // Simpler way to get block from Location
 
             Material originalType = block.getType();
             // Temporarily set the type to check its state. This is a common workaround.
@@ -117,7 +115,6 @@ public class ZoneProtectionListener implements Listener {
             boolean isHolder = block.getState() instanceof InventoryHolder;
             block.setType(originalType, false); // Revert to original type
             return isHolder;
-
         } catch (Exception e) {
             plugin.getLogger().log(Level.WARNING, "Error checking if material is InventoryHolder: " + material, e);
             return false;
@@ -131,7 +128,6 @@ public class ZoneProtectionListener implements Listener {
         Chunk chunk = event.getBlock().getChunk();
         String ownerNameKey = plugin.getFactionOwningChunk(chunk);
         Faction owningFaction = (ownerNameKey != null) ? plugin.getFaction(ownerNameKey) : null;
-
         if (owningFaction == null && ownerNameKey != null) {
             plugin.getLogger().warning("Chunk " + chunk.getX() + "," + chunk.getZ() + " in world " + chunk.getWorld().getName() +
                     " is mapped to a non-existent faction key: " + ownerNameKey + ". Allowing action as fallback.");
@@ -152,7 +148,6 @@ public class ZoneProtectionListener implements Listener {
         Chunk chunk = event.getBlock().getChunk();
         String ownerNameKey = plugin.getFactionOwningChunk(chunk);
         Faction owningFaction = (ownerNameKey != null) ? plugin.getFaction(ownerNameKey) : null;
-
         if (owningFaction == null && ownerNameKey != null) {
             plugin.getLogger().warning("Chunk " + chunk.getX() + "," + chunk.getZ() + " in world " + chunk.getWorld().getName() +
                     " is mapped to a non-existent faction key: " + ownerNameKey + ". Allowing action as fallback.");
@@ -176,12 +171,12 @@ public class ZoneProtectionListener implements Listener {
         boolean isPotentiallyProtectedInteraction = MEMBER_PLUS_INTERACT_ONLY_MATERIALS.contains(clickedBlock.getType()) ||
                 ASSOCIATE_ALLOWED_INTERACT_MATERIALS.contains(clickedBlock.getType()) ||
                 (clickedBlock.getState() instanceof InventoryHolder);
-
         if (!isPotentiallyProtectedInteraction) return;
 
         Chunk chunk = clickedBlock.getChunk();
         String ownerNameKey = plugin.getFactionOwningChunk(chunk);
-        Faction owningFaction = (ownerNameKey != null) ? plugin.getFaction(ownerNameKey) : null;
+        Faction owningFaction = (ownerNameKey != null) ?
+                plugin.getFaction(ownerNameKey) : null;
 
         if (owningFaction == null && ownerNameKey != null) {
             plugin.getLogger().warning("Chunk " + chunk.getX() + "," + chunk.getZ() + " in world " + chunk.getWorld().getName() +
@@ -199,18 +194,18 @@ public class ZoneProtectionListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEntityDamageByEntity(EntityDamageByEntityEvent event) {
+        if (!plugin.PVP_PROTECTION_SYSTEM_ENABLED) return; // Master toggle check
+
         if (!(event.getEntity() instanceof Player) || !(event.getDamager() instanceof Player)) {
             return;
         }
 
         Player victim = (Player) event.getEntity();
         Player attacker = (Player) event.getDamager();
-
         Faction victimFaction = plugin.getFactionOwningChunkAsFaction(victim.getLocation().getChunk());
 
         if (victimFaction != null && victimFaction.isPvpProtected()) {
             Faction attackerFaction = plugin.getFactionByPlayer(attacker.getUniqueId());
-
             if (victimFaction.equals(attackerFaction)) {
                 return;
             }

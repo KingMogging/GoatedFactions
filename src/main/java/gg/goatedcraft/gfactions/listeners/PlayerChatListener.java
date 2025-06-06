@@ -18,7 +18,6 @@ import java.util.UUID;
 public class PlayerChatListener implements Listener {
 
     private final GFactionsPlugin plugin;
-
     public PlayerChatListener(GFactionsPlugin plugin) {
         this.plugin = plugin;
     }
@@ -28,10 +27,10 @@ public class PlayerChatListener implements Listener {
         Player player = event.getPlayer();
         UUID playerUUID = player.getUniqueId();
         String originalMessage = event.getMessage();
-        // String originalFormat = event.getFormat(); // We will construct the format
+        // String originalFormat = event.getFormat();
+        // We will construct the format
 
         Faction playerFaction = plugin.getFactionByPlayer(playerUUID);
-
         if (plugin.isPlayerInFactionChat(playerUUID)) {
             if (!plugin.FACTION_CHAT_ENABLED) {
                 player.sendMessage(ChatColor.RED + "Faction chat is currently disabled by an administrator.");
@@ -41,18 +40,19 @@ public class PlayerChatListener implements Listener {
                 return;
             }
 
-            event.setCancelled(true); // Cancel the original public message
+            event.setCancelled(true);
+            // Cancel the original public message
 
             if (playerFaction == null) {
                 plugin.setPlayerFactionChat(playerUUID, false);
                 player.sendMessage(ChatColor.RED + "You are no longer in faction chat as you are not in a faction.");
-                Bukkit.getScheduler().runTask(plugin, () -> player.chat(originalMessage)); // Resend as public
+                Bukkit.getScheduler().runTask(plugin, () -> player.chat(originalMessage));
+                // Resend as public
                 return;
             }
 
             FactionRank rank = playerFaction.getRank(playerUUID);
             String rankDisplay = (rank != null) ? rank.getDisplayName() : FactionRank.ASSOCIATE.getDisplayName();
-
             // Using the modified FACTION_CHAT_FORMAT (rank only prefix)
             String factionChatFormat = plugin.FACTION_CHAT_FORMAT // This format should now be rank-prefix focused
                     .replace("{RANK}", rankDisplay)
@@ -61,7 +61,8 @@ public class PlayerChatListener implements Listener {
                     // {FACTION_NAME} placeholder might still be in the string from config,
                     // ensure your config default is updated or it will show "null" or the literal placeholder.
                     // For safety, explicitly replace it here if it's not part of the desired rank-only format.
-                    .replace("{FACTION_NAME}", playerFaction.getName()); // Keep this if format string might still contain it, otherwise remove
+                    .replace("{FACTION_NAME}", playerFaction.getName());
+            // Keep this if format string might still contain it, otherwise remove
 
 
             Set<Player> recipients = new HashSet<>();
@@ -94,7 +95,6 @@ public class PlayerChatListener implements Listener {
                 }
             }
             plugin.getLogger().info("[FactionChat] " + ChatColor.stripColor(factionChatFormat));
-
         } else if (plugin.isPlayerInAllyChat(playerUUID)) {
             if (!plugin.ALLY_CHAT_ENABLED || !plugin.ENEMY_SYSTEM_ENABLED) { // Ally chat disabled if enemy system is off
                 player.sendMessage(ChatColor.RED + "Ally chat is currently disabled.");
@@ -104,7 +104,6 @@ public class PlayerChatListener implements Listener {
                 return;
             }
             event.setCancelled(true);
-
             if (playerFaction == null) {
                 plugin.setPlayerAllyChat(playerUUID, false);
                 player.sendMessage(ChatColor.RED + "You are no longer in ally chat as you are not in a faction.");
@@ -116,7 +115,6 @@ public class PlayerChatListener implements Listener {
                     .replace("{FACTION_NAME}", playerFaction.getName())
                     .replace("{PLAYER_NAME}", player.getDisplayName())
                     .replace("{MESSAGE}", originalMessage);
-
             Set<Player> recipients = new HashSet<>();
             for (UUID memberUUID : playerFaction.getMemberUUIDsOnly()) {
                 Player member = Bukkit.getPlayer(memberUUID);
@@ -146,31 +144,15 @@ public class PlayerChatListener implements Listener {
                 }
             }
             plugin.getLogger().info("[AllyChat] " + ChatColor.stripColor(allyChatFormat));
-
         } else { // Public chat - apply prefix
             if (playerFaction != null) {
-                // Determine prefix style (short tag like tab)
-                FactionRank rank = playerFaction.getRank(player.getUniqueId()); // Rank needed for color
-                ChatColor factionColor = ChatColor.GRAY;
-                if (rank != null) {
-                    switch (rank) {
-                        case OWNER: factionColor = ChatColor.GOLD; break;
-                        case ADMIN: factionColor = ChatColor.RED; break;
-                        case MEMBER: factionColor = ChatColor.GREEN; break;
-                        case ASSOCIATE: factionColor = ChatColor.AQUA; break;
-                    }
-                }
-                String factionTag = playerFaction.getName().substring(0, Math.min(playerFaction.getName().length(), plugin.FACTION_TAG_LENGTH)).toUpperCase();
-                String chatPrefix = ChatColor.translateAlternateColorCodes('&',
-                        plugin.PUBLIC_CHAT_TAG_FORMAT
-                                .replace("{FACTION_TAG_COLOR}", factionColor.toString())
-                                .replace("{FACTION_TAG}", factionTag)
-                );
+                // MODIFIED: Use the full name prefix format
+                String chatPrefix = plugin.PUBLIC_CHAT_PREFIX_FORMAT
+                        .replace("{FACTION_NAME}", playerFaction.getName());
 
-                // Construct a new format string: [TAG] <PlayerName> Message
+                // Construct a new format string: [FACTION_NAME] <PlayerName>: Message
                 // %1$s is player's display name, %2$s is the message.
-                // Make sure to include colors for player name and message if desired, or let other plugins handle that.
-                // This format string will be: PREFIX <PlayerNameFromEvent> MessageFromEvent
+                // The prefix is already color-translated when loaded from the config.
                 event.setFormat(chatPrefix + "%1$s" + ChatColor.RESET + ": %2$s");
             }
             // If no faction, default chat handling applies

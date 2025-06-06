@@ -85,7 +85,6 @@ public class GFactionsPlugin extends JavaPlugin {
     public int COST_PROMOTE_MEMBER = 2;
     public int COST_TRUST_PLAYER = 1;
     public int COST_CREATE_OUTPOST = 50;
-    public int COST_CLAIM_FILL_PER_CHUNK = 1;
     public long COOLDOWN_ENEMY_NEUTRAL_HOURS = 24;
     public long EXPIRATION_MEMBER_INVITE_MINUTES = 5;
     public long EXPIRATION_ALLY_REQUEST_MINUTES = 5;
@@ -118,6 +117,7 @@ public class GFactionsPlugin extends JavaPlugin {
     public boolean TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT = false; // New
 
     public boolean ENEMY_SYSTEM_ENABLED = true; // Now directly here, was in faction_details
+    public boolean PVP_PROTECTION_SYSTEM_ENABLED = false; // NEW: Master PvP system toggle
     public boolean PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT = false; // New
     public boolean VAULT_SYSTEM_ENABLED = true;
     public boolean OUTPOST_SYSTEM_ENABLED = true;
@@ -136,6 +136,19 @@ public class GFactionsPlugin extends JavaPlugin {
     public Location SERVER_SPAWN_LOCATION;
     private static final int CLAIM_FILL_MAX_POCKET_SIZE = 100;
     private static final int CLAIM_FILL_BFS_LIMIT = 500;
+
+    // NEW: Toggles for the /f who screen
+    public boolean SHOW_WHO_OWNER = true;
+    public boolean SHOW_WHO_POWER = true;
+    public boolean SHOW_WHO_CLAIMS = true;
+    public boolean SHOW_WHO_PVP_STATUS = true;
+    public boolean SHOW_WHO_HOME_LOCATION = false;
+    public boolean SHOW_WHO_LEADERSHIP_LIST = true;
+    public boolean SHOW_WHO_MEMBERS_LIST = true;
+    public boolean SHOW_WHO_ASSOCIATES_LIST = true;
+    public boolean SHOW_WHO_ALLIES_LIST = true;
+    public boolean SHOW_WHO_ENEMIES_LIST = true;
+    public boolean SHOW_WHO_OUTPOSTS = true;
 
 
     @Override
@@ -316,7 +329,6 @@ public class GFactionsPlugin extends JavaPlugin {
         COST_PROMOTE_MEMBER = config.getInt("power.cost.promote_member", 0);
         COST_TRUST_PLAYER = config.getInt("power.cost.trust_player", 0);
         COST_CREATE_OUTPOST = config.getInt("power.cost.create_outpost", 50);
-        COST_CLAIM_FILL_PER_CHUNK = config.getInt("power.cost.claim_fill",1);
 
 
         COOLDOWN_ENEMY_NEUTRAL_HOURS = config.getLong("cooldowns.enemy_neutral_declaration_hours", 24);
@@ -359,7 +371,8 @@ public class GFactionsPlugin extends JavaPlugin {
         // UPDATED DEFAULT for FACTION_CHAT_FORMAT
         FACTION_CHAT_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.faction_chat_format", "&8[&2{RANK}&8] &f{PLAYER_NAME}: &e{MESSAGE}"));
         ALLY_CHAT_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.ally_chat_format", "&8[&6ALLY&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}"));
-        PUBLIC_CHAT_PREFIX_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_prefix_format", "&7[{FACTION_NAME}&7] &r")); // Kept for potential other uses
+        PUBLIC_CHAT_PREFIX_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_prefix_format", "&7[{FACTION_NAME}&7] &r"));
+        // Kept for potential other uses
         PUBLIC_CHAT_TAG_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_tag_format", "&8[{FACTION_TAG_COLOR}{FACTION_TAG}&8] "));
         FACTION_TAG_LENGTH = config.getInt("faction_details.chat.faction_tag_length", 4);
         TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT = config.getBoolean("faction_details.chat.trusted_hear_faction_chat", false);
@@ -371,6 +384,7 @@ public class GFactionsPlugin extends JavaPlugin {
             ALLY_CHAT_ENABLED = false; // Disable ally chat if enemy system is off
         }
 
+        PVP_PROTECTION_SYSTEM_ENABLED = config.getBoolean("faction_details.pvp_protection_system_enabled", false);
         PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT = config.getBoolean("claiming.pvp_protection_enabled_by_default", false);
         VAULT_SYSTEM_ENABLED = config.getBoolean("faction_details.vault_system_enabled", true);
         OUTPOST_SYSTEM_ENABLED = config.getBoolean("faction_details.outpost_system_enabled", true);
@@ -403,6 +417,20 @@ public class GFactionsPlugin extends JavaPlugin {
             FACTION_GUIDE_MESSAGES.add(ChatColor.YELLOW + "Claims: " + ChatColor.WHITE + "Use /f claim to expand your territory.");
             FACTION_GUIDE_MESSAGES.add(ChatColor.YELLOW + "More help: " + ChatColor.WHITE + "Use /f help for a full command list.");
         }
+
+        // Load /f who screen toggles
+        SHOW_WHO_OWNER = config.getBoolean("faction_details.who_screen_display.show_owner", true);
+        SHOW_WHO_POWER = config.getBoolean("faction_details.who_screen_display.show_power", true);
+        SHOW_WHO_CLAIMS = config.getBoolean("faction_details.who_screen_display.show_claims", true);
+        SHOW_WHO_PVP_STATUS = config.getBoolean("faction_details.who_screen_display.show_pvp_status", true);
+        SHOW_WHO_HOME_LOCATION = config.getBoolean("faction_details.who_screen_display.show_home_location", false);
+        SHOW_WHO_LEADERSHIP_LIST = config.getBoolean("faction_details.who_screen_display.show_leadership_list", true);
+        SHOW_WHO_MEMBERS_LIST = config.getBoolean("faction_details.who_screen_display.show_members_list", true);
+        SHOW_WHO_ASSOCIATES_LIST = config.getBoolean("faction_details.who_screen_display.show_associates_list", true);
+        SHOW_WHO_ALLIES_LIST = config.getBoolean("faction_details.who_screen_display.show_allies_list", true);
+        SHOW_WHO_ENEMIES_LIST = config.getBoolean("faction_details.who_screen_display.show_enemies_list", true);
+        SHOW_WHO_OUTPOSTS = config.getBoolean("faction_details.who_screen_display.show_outposts", true);
+
         getLogger().info("GFactions configuration values have been processed.");
     }
 
@@ -513,7 +541,6 @@ public class GFactionsPlugin extends JavaPlugin {
 
         if (PREVENT_CLAIM_NEAR_SPAWN && SERVER_SPAWN_LOCATION != null) {
             Chunk spawnServerChunk = SERVER_SPAWN_LOCATION.getChunk();
-
             if (Objects.equals(initialChunk.getWorld().getName(), spawnServerChunk.getWorld().getName())) {
                 int distChunksX = Math.abs(initialChunk.getX() - spawnServerChunk.getX());
                 int distChunksZ = Math.abs(initialChunk.getZ() - spawnServerChunk.getZ());
@@ -889,7 +916,8 @@ public class GFactionsPlugin extends JavaPlugin {
     }
 
     public boolean acceptAllyRequest(Faction acceptingFaction, Faction requestingFaction) {
-        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return false; // Also check ENEMY_SYSTEM_ENABLED
+        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return false;
+        // Also check ENEMY_SYSTEM_ENABLED
         Map<String, Long> requestsForAccepting = pendingAllyRequests.get(acceptingFaction.getNameKey());
         if (requestsForAccepting == null || !requestsForAccepting.containsKey(requestingFaction.getNameKey()) || requestsForAccepting.get(requestingFaction.getNameKey()) < System.currentTimeMillis()) {
             return false;
@@ -924,7 +952,8 @@ public class GFactionsPlugin extends JavaPlugin {
 
 
     public void revokeAlliance(Faction faction1, Faction faction2) {
-        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return; // Also check ENEMY_SYSTEM_ENABLED
+        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return;
+        // Also check ENEMY_SYSTEM_ENABLED
         boolean changed1 = faction1.removeAlly(faction2.getNameKey());
         boolean changed2 = faction2.removeAlly(faction1.getNameKey());
         if (changed1 || changed2) {
@@ -996,7 +1025,8 @@ public class GFactionsPlugin extends JavaPlugin {
                 faction.setCurrentPower(facSec.getInt("currentPower"));
                 faction.setAccumulatedFractionalPower(facSec.getDouble("fractionalPower", 0.0));
                 faction.setClaimLimitOverride(facSec.getInt("claimLimitOverride", -1)); // Load claim limit override
-                faction.setPvpProtected(facSec.getBoolean("pvpProtected", this.PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT)); // Load PvP status
+                faction.setPvpProtected(facSec.getBoolean("pvpProtected", this.PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT));
+                // Load PvP status
 
 
                 ConfigurationSection membersSec = facSec.getConfigurationSection("members");
@@ -1144,8 +1174,10 @@ public class GFactionsPlugin extends JavaPlugin {
             }
             facSec.set("currentPower", faction.getCurrentPower());
             facSec.set("fractionalPower", faction.getAccumulatedFractionalPower());
-            facSec.set("claimLimitOverride", faction.getClaimLimitOverride()); // Save claim limit override
-            facSec.set("pvpProtected", faction.isPvpProtected()); // Save PvP status
+            facSec.set("claimLimitOverride", faction.getClaimLimitOverride());
+            // Save claim limit override
+            facSec.set("pvpProtected", faction.isPvpProtected());
+            // Save PvP status
 
 
             ConfigurationSection membersSec = facSec.createSection("members");
@@ -1253,8 +1285,6 @@ public class GFactionsPlugin extends JavaPlugin {
         pendingAllyRequests.values().forEach(map -> map.remove(nameKey));
 
         factionLastOnlineTime.remove(nameKey);
-
-
         if (dynmapManager != null && dynmapManager.isEnabled()) {
             dynmapManager.removeFactionClaimsFromMap(factionToDisband);
         }
@@ -1440,7 +1470,6 @@ public class GFactionsPlugin extends JavaPlugin {
 
         int[] dX = {0, 0, 1, -1};
         int[] dZ = {1, -1, 0, 0};
-
         for (int i = 0; i < 4; i++) {
             ChunkWrapper directNeighbor = new ChunkWrapper(worldName, initialChunk.getX() + dX[i], initialChunk.getZ() + dZ[i]);
             if (!claimedChunks.containsKey(directNeighbor)) {
@@ -1462,7 +1491,6 @@ public class GFactionsPlugin extends JavaPlugin {
                 continue;
             }
             pocket.add(current);
-
             for (int i = 0; i < 4; i++) {
                 ChunkWrapper neighbor = new ChunkWrapper(worldName, current.getX() + dX[i], current.getZ() + dZ[i]);
                 if (!visitedInBFS.contains(neighbor) && !claimedChunks.containsKey(neighbor)) {
@@ -1503,14 +1531,12 @@ public class GFactionsPlugin extends JavaPlugin {
         }
         Chunk playerChunk = player.getLocation().getChunk();
         ChunkWrapper playerCW = new ChunkWrapper(playerChunk.getWorld().getName(), playerChunk.getX(), playerChunk.getZ());
-
         if (!Objects.equals(getFactionOwningChunk(playerChunk), faction.getNameKey())) {
             player.sendMessage(ChatColor.RED + "You must be standing in your own faction's territory to use claimfill.");
             return;
         }
 
         Set<ChunkWrapper> toFill = findSurroundedUnclaimedChunks(playerChunk, faction);
-
         if (toFill.isEmpty()) {
             player.sendMessage(ChatColor.YELLOW + "No fillable pockets of land found connected to this chunk.");
             return;
@@ -1521,7 +1547,7 @@ public class GFactionsPlugin extends JavaPlugin {
         }
 
 
-        int claimCostPerChunk = COST_CLAIM_FILL_PER_CHUNK;
+        int claimCostPerChunk = COST_CLAIM_CHUNK; // MODIFIED: Use the standard claim cost
         int totalCost = toFill.size() * claimCostPerChunk;
         int maxClaims = faction.getMaxClaimsCalculated(this);
         if (faction.getClaimLimitOverride() != -1) { // Check for override
@@ -1567,12 +1593,10 @@ public class GFactionsPlugin extends JavaPlugin {
 
         Faction playerFaction = getFactionByPlayer(player.getUniqueId());
         String prefix = "";
-
         if (playerFaction != null) {
             FactionRank rank = playerFaction.getRank(player.getUniqueId());
             String rankPrefixString = ""; // For display in tab
             ChatColor factionColor = ChatColor.GRAY;
-
             if (rank != null) {
                 switch (rank) {
                     case OWNER:
@@ -1592,7 +1616,8 @@ public class GFactionsPlugin extends JavaPlugin {
                 }
             }
             String factionTag = playerFaction.getName().substring(0, Math.min(playerFaction.getName().length(), FACTION_TAG_LENGTH)).toUpperCase();
-            prefix = ChatColor.DARK_GRAY + "[" + factionColor + factionTag + ChatColor.DARK_GRAY + "] " + rankPrefixString + factionColor; // Apply faction color to name too
+            prefix = ChatColor.DARK_GRAY + "[" + factionColor + factionTag + ChatColor.DARK_GRAY + "] " + rankPrefixString + factionColor;
+            // Apply faction color to name too
 
             String baseName = player.getName();
             player.setPlayerListName(prefix + baseName + ChatColor.RESET);

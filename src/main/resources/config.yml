@@ -27,7 +27,6 @@ power:
     promote_member: 2
     trust_player: 1
     create_outpost: 50        # Cost to create an outpost
-    claim_fill: 1             # Power cost per chunk for /f claimfill
 
 # Cooldowns & Expirations
 cooldowns:
@@ -76,7 +75,22 @@ faction_details:
   enemy_system_enabled: true
   vault_system_enabled: true
   outpost_system_enabled: true
+  pvp_protection_system_enabled: false # NEW: Master toggle for the PvP Protection feature
   max_outposts: 1                 # Maximum number of outposts a faction can have
+  # /f info (or /f who) Screen Display Toggles
+  who_screen_display:
+    show_owner: true
+    show_power: true
+    show_claims: true
+    show_pvp_status: true
+    show_home_location: false # Disabled by default as requested
+    show_leadership_list: true
+    show_members_list: true
+    show_associates_list: true
+    show_allies_list: true
+    show_enemies_list: true
+    show_outposts: true
+
 
 # Claiming Restrictions
 claiming:
@@ -109,7 +123,6 @@ messages:
     - "&f - Dying to enemies can cause power loss."
     - "&eClaims: &fUse /f claim to expand your territory."
     - "&eMore help: &fUse /f help for a full command list."
-
 # --- Data Storage - Do Not Manually Edit Below This Line ---
 factions: {}
 pendingAllyRequests: {}

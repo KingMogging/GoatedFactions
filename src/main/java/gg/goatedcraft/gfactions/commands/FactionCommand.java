@@ -269,6 +269,10 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 handleGuide(player);
                 break;
             case "togglepvp": // New command
+                if (!plugin.PVP_PROTECTION_SYSTEM_ENABLED) {
+                    player.sendMessage(ChatColor.RED + "The PvP protection system is disabled on this server.");
+                    return true;
+                }
                 handleTogglePvp(player, playerFaction);
                 break;
             default:
@@ -285,7 +289,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + "/f who|info [faction]" + ChatColor.GRAY + " - View faction information.");
         player.sendMessage(ChatColor.YELLOW + "/f claim" + ChatColor.GRAY + " - Claim chunk (Cost: " + COST_PLACEHOLDER + plugin.COST_CLAIM_CHUNK + ChatColor.GRAY + ").");
         if (plugin.AUTOCLAIM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f autoclaim" + ChatColor.GRAY + " - Toggle automatic chunk claiming.");
-        if (plugin.CLAIMFILL_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f claimfill" + ChatColor.GRAY + " - Attempt to claim surrounded chunks (Cost: " + COST_PLACEHOLDER + plugin.COST_CLAIM_FILL_PER_CHUNK + "/chunk" + ChatColor.GRAY + ").");
+        if (plugin.CLAIMFILL_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f claimfill" + ChatColor.GRAY + " - Attempt to claim surrounded chunks (Cost: " + COST_PLACEHOLDER + plugin.COST_CLAIM_CHUNK + "/chunk" + ChatColor.GRAY + ").");
         player.sendMessage(ChatColor.YELLOW + "/f unclaim" + ChatColor.GRAY + " - Unclaim the chunk you are standing in.");
         player.sendMessage(ChatColor.YELLOW + "/f sethome" + ChatColor.GRAY + " - Set your faction's home in claimed land.");
         player.sendMessage(ChatColor.YELLOW + "/f home [faction]" + ChatColor.GRAY + " - Teleport to faction home (or trusted/ally).");
@@ -300,7 +304,6 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + "/f trust <player>" + ChatColor.GRAY + " - Trust a player in your territory.");
         player.sendMessage(ChatColor.YELLOW + "/f untrust <player>" + ChatColor.GRAY + " - Untrust a player.");
         if (plugin.VAULT_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f vault" + ChatColor.GRAY + " - Open faction vault (Admin/Owner only).");
-
         if (plugin.ENEMY_SYSTEM_ENABLED) {
             player.sendMessage(ChatColor.YELLOW + "/f ally <faction>" + ChatColor.GRAY + " - Request alliance (Cost: " + COST_PLACEHOLDER + plugin.COST_SEND_ALLY_REQUEST + ChatColor.GRAY + ").");
             player.sendMessage(ChatColor.YELLOW + "/f unally <faction>" + ChatColor.GRAY + " - Break alliance with a faction.");
@@ -314,7 +317,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         if (plugin.FACTION_CHAT_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f chat|c" + ChatColor.GRAY + " - Toggle faction-only chat.");
         if (plugin.ALLY_CHAT_ENABLED && plugin.ENEMY_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f allychat|ac" + ChatColor.GRAY + " - Toggle ally-only chat.");
         if (plugin.OUTPOST_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f outpost" + ChatColor.GRAY + " - View outpost subcommands.");
-        player.sendMessage(ChatColor.YELLOW + "/f togglepvp" + ChatColor.GRAY + " - Toggle PvP protection in your faction's territory (Admin/Owner).");
+        if (plugin.PVP_PROTECTION_SYSTEM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f togglepvp" + ChatColor.GRAY + " - Toggle PvP protection in your faction's territory (Admin/Owner).");
         player.sendMessage(ChatColor.YELLOW + "/f guide" + ChatColor.GRAY + " - Shows a quick faction guide.");
         if (player.hasPermission("goatedfactions.admin")) {
             player.sendMessage(ChatColor.RED + "Admin commands: /fa help");
@@ -447,24 +450,37 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             }
         }
 
-        OfflinePlayer owner = Bukkit.getOfflinePlayer(targetFaction.getOwnerUUID());
-        String ownerName = owner.getName() != null ? owner.getName() : "Unknown (" + targetFaction.getOwnerUUID().toString().substring(0,6) + ")";
         player.sendMessage(ChatColor.GOLD + "--- " + ChatColor.AQUA + targetFaction.getName() + ChatColor.GOLD + " ---");
-        player.sendMessage(ChatColor.YELLOW + "Owner: " + ChatColor.WHITE + ownerName);
-        player.sendMessage(ChatColor.YELLOW + "Power: " + ChatColor.RED + targetFaction.getCurrentPower() + ChatColor.GRAY + "/" + ChatColor.GREEN + targetFaction.getMaxPowerCalculated(plugin));
-        int maxClaims = targetFaction.getMaxClaimsCalculated(plugin);
-        if (targetFaction.getClaimLimitOverride() != -1) maxClaims = targetFaction.getClaimLimitOverride();
-        player.sendMessage(ChatColor.YELLOW + "Claims: " + ChatColor.WHITE + targetFaction.getClaimedChunks().size() +
-                "/" + (maxClaims == Integer.MAX_VALUE ? "Unlimited" : maxClaims));
-        player.sendMessage(ChatColor.YELLOW + "PvP Protection: " + (targetFaction.isPvpProtected() ? ChatColor.GREEN + "Enabled" : ChatColor.RED + "Disabled"));
 
+        if (plugin.SHOW_WHO_OWNER) {
+            OfflinePlayer owner = Bukkit.getOfflinePlayer(targetFaction.getOwnerUUID());
+            String ownerName = owner.getName() != null ? owner.getName() : "Unknown (" + targetFaction.getOwnerUUID().toString().substring(0, 6) + ")";
+            player.sendMessage(ChatColor.YELLOW + "Owner: " + ChatColor.WHITE + ownerName);
+        }
 
-        if (targetFaction.getHomeLocation() != null) {
-            Location home = targetFaction.getHomeLocation();
-            player.sendMessage(ChatColor.YELLOW + "Home: " + ChatColor.WHITE + (home.getWorld() != null ? home.getWorld().getName() : "N/A") +
-                    " (" + home.getBlockX() + ", " + home.getBlockY() + ", " + home.getBlockZ() + ")");
-        } else {
-            player.sendMessage(ChatColor.YELLOW + "Home: " + ChatColor.WHITE + "Not set");
+        if (plugin.SHOW_WHO_POWER) {
+            player.sendMessage(ChatColor.YELLOW + "Power: " + ChatColor.RED + targetFaction.getCurrentPower() + ChatColor.GRAY + "/" + ChatColor.GREEN + targetFaction.getMaxPowerCalculated(plugin));
+        }
+
+        if (plugin.SHOW_WHO_CLAIMS) {
+            int maxClaims = targetFaction.getMaxClaimsCalculated(plugin);
+            if (targetFaction.getClaimLimitOverride() != -1) maxClaims = targetFaction.getClaimLimitOverride();
+            player.sendMessage(ChatColor.YELLOW + "Claims: " + ChatColor.WHITE + targetFaction.getClaimedChunks().size() +
+                    "/" + (maxClaims == Integer.MAX_VALUE ? "Unlimited" : maxClaims));
+        }
+
+        if (plugin.PVP_PROTECTION_SYSTEM_ENABLED && plugin.SHOW_WHO_PVP_STATUS) {
+            player.sendMessage(ChatColor.YELLOW + "PvP Protection: " + (targetFaction.isPvpProtected() ? ChatColor.GREEN + "Enabled" : ChatColor.RED + "Disabled"));
+        }
+
+        if (plugin.SHOW_WHO_HOME_LOCATION) {
+            if (targetFaction.getHomeLocation() != null) {
+                Location home = targetFaction.getHomeLocation();
+                player.sendMessage(ChatColor.YELLOW + "Home: " + ChatColor.WHITE + (home.getWorld() != null ? home.getWorld().getName() : "N/A") +
+                        " (" + home.getBlockX() + ", " + home.getBlockY() + ", " + home.getBlockZ() + ")");
+            } else {
+                player.sendMessage(ChatColor.YELLOW + "Home: " + ChatColor.WHITE + "Not set");
+            }
         }
 
         List<String> adminList = new ArrayList<>();
@@ -503,31 +519,36 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         adminList.sort(String.CASE_INSENSITIVE_ORDER);
         memberList.sort(String.CASE_INSENSITIVE_ORDER);
         associateList.sort(String.CASE_INSENSITIVE_ORDER);
-        if (!adminList.isEmpty()) player.sendMessage(ChatColor.YELLOW + "Leadership (" + adminList.size() + "): " + String.join(ChatColor.GRAY + ", ", adminList));
-        if (!memberList.isEmpty()) player.sendMessage(ChatColor.YELLOW + "Members (" + memberList.size() + "): " + String.join(ChatColor.GRAY + ", ", memberList));
-        if (!associateList.isEmpty()) player.sendMessage(ChatColor.YELLOW + "Associates (" + associateList.size() + "): " + String.join(ChatColor.GRAY + ", ", associateList));
+
+        if (plugin.SHOW_WHO_LEADERSHIP_LIST && !adminList.isEmpty()) player.sendMessage(ChatColor.YELLOW + "Leadership (" + adminList.size() + "): " + String.join(ChatColor.GRAY + ", ", adminList));
+        if (plugin.SHOW_WHO_MEMBERS_LIST && !memberList.isEmpty()) player.sendMessage(ChatColor.YELLOW + "Members (" + memberList.size() + "): " + String.join(ChatColor.GRAY + ", ", memberList));
+        if (plugin.SHOW_WHO_ASSOCIATES_LIST && !associateList.isEmpty()) player.sendMessage(ChatColor.YELLOW + "Associates (" + associateList.size() + "): " + String.join(ChatColor.GRAY + ", ", associateList));
+
         if (adminList.isEmpty() && memberList.isEmpty() && associateList.isEmpty() && targetFaction.isOwner(targetFaction.getOwnerUUID()) && targetFaction.getTotalSize() == 1) {
-            String ownerDisplayName = owner.getName() != null ?
-                    owner.getName() : "Owner";
-            String ownerStatusPrefix = owner.isOnline() ? ChatColor.GREEN + "● " : ChatColor.DARK_GRAY + "● ";
-            player.sendMessage(ChatColor.YELLOW + "Members (1): " + ownerStatusPrefix + ChatColor.GOLD + FactionRank.OWNER.getDisplayName() + ": " + ownerDisplayName);
+            if (plugin.SHOW_WHO_LEADERSHIP_LIST || plugin.SHOW_WHO_MEMBERS_LIST || plugin.SHOW_WHO_ASSOCIATES_LIST) {
+                OfflinePlayer owner = Bukkit.getOfflinePlayer(targetFaction.getOwnerUUID());
+                String ownerDisplayName = owner.getName() != null ? owner.getName() : "Owner";
+                String ownerStatusPrefix = owner.isOnline() ? ChatColor.GREEN + "● " : ChatColor.DARK_GRAY + "● ";
+                player.sendMessage(ChatColor.YELLOW + "Members (1): " + ownerStatusPrefix + ChatColor.GOLD + FactionRank.OWNER.getDisplayName() + ": " + ownerDisplayName);
+            }
         }
 
         if (plugin.ENEMY_SYSTEM_ENABLED) {
-            if (!targetFaction.getAllyFactionKeys().isEmpty()) {
+            if (plugin.SHOW_WHO_ALLIES_LIST && !targetFaction.getAllyFactionKeys().isEmpty()) {
                 String allies = targetFaction.getAllyFactionKeys().stream()
                         .map(key -> { Faction f = plugin.getFaction(key); return f != null && f.getName() != null ? f.getName() : key; })
                         .collect(Collectors.joining(", "));
                 player.sendMessage(ChatColor.YELLOW + "Allies: " + ChatColor.AQUA + allies);
             }
-            if (!targetFaction.getEnemyFactionKeys().isEmpty()) {
+            if (plugin.SHOW_WHO_ENEMIES_LIST && !targetFaction.getEnemyFactionKeys().isEmpty()) {
                 String enemies = targetFaction.getEnemyFactionKeys().stream()
                         .map(key -> { Faction f = plugin.getFaction(key); return f != null && f.getName() != null ? f.getName() : key; })
                         .collect(Collectors.joining(", "));
                 player.sendMessage(ChatColor.YELLOW + "Enemies: " + ChatColor.DARK_RED + enemies);
             }
         }
-        if (plugin.OUTPOST_SYSTEM_ENABLED && !targetFaction.getOutposts().isEmpty()) {
+
+        if (plugin.OUTPOST_SYSTEM_ENABLED && plugin.SHOW_WHO_OUTPOSTS && !targetFaction.getOutposts().isEmpty()) {
             player.sendMessage(ChatColor.YELLOW + "Outposts: " + ChatColor.WHITE + targetFaction.getOutposts().size() +
                     (plugin.MAX_OUTPOSTS_PER_FACTION > 0 ? "/" + plugin.MAX_OUTPOSTS_PER_FACTION : ""));
             for (Outpost outpost : targetFaction.getOutposts()) {
@@ -629,7 +650,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
     }
 
     private void handleHome(Player player, @Nullable Faction playerFaction, @Nullable String targetFactionName, boolean isOutpostHomeCmd) {
-        if (isOutpostHomeCmd) return; // This command is not for outpost homes
+        if (isOutpostHomeCmd) return;
+        // This command is not for outpost homes
         Faction targetFac;
         if (targetFactionName != null) {
             targetFac = plugin.getFaction(targetFactionName);
@@ -641,7 +663,6 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             boolean canTeleportToOther = (playerFaction != null && playerFaction.equals(targetFac)) ||
                     (playerFaction != null && plugin.ENEMY_SYSTEM_ENABLED && plugin.ALLY_CHAT_ENABLED && playerFaction.isAlly(targetFac.getNameKey())) ||
                     targetFac.isTrusted(player.getUniqueId());
-
             if (!canTeleportToOther && !player.hasPermission("goatedfactions.admin.home.other")) {
                 player.sendMessage(ChatColor.RED + "You can only teleport to your own faction's home, an ally's home, or a faction that trusts you.");
                 return;
@@ -910,7 +931,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         }
 
 
-        FactionRank newRank = FactionRank.fromString(rankName); // fromString handles display name or enum name
+        FactionRank newRank = FactionRank.fromString(rankName);
+        // fromString handles display name or enum name
         if (newRank == FactionRank.MEMBER && rankName.equalsIgnoreCase("member")) {
             // This is fine, fromString will return MEMBER
         } else if (newRank == FactionRank.ADMIN && rankName.equalsIgnoreCase("admin")) {
@@ -1375,7 +1397,8 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 player.sendMessage(ChatColor.GREEN + "Outpost #" + newOutpost.getOutpostID() + " created at your location! This chunk is now its home.");
                 player.sendMessage(ChatColor.GREEN + "Power: " + playerFaction.getCurrentPower() + "/" + playerFaction.getMaxPowerCalculated(plugin));
             } else {
-                // Should not happen if max outposts check passed. Rollback claim if addOutpost failed.
+                // Should not happen if max outposts check passed.
+                // Rollback claim if addOutpost failed.
                 plugin.unclaimChunkPlayer(playerFaction, cw, null); // Silently unclaim if addOutpost failed
                 player.sendMessage(ChatColor.RED + "Failed to finalize outpost creation despite successful claim. Outpost creation cancelled.");
             }
@@ -1528,8 +1551,9 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             List<String> subCommands = new ArrayList<>(Arrays.asList(
                     "help", "create", "list", "who", "info", "invite", "uninvite", "kick", "leave", "accept",
                     "claim", "unclaim", "sethome", "home", "power", "setrank", "leader", "owner",
-                    "trust", "untrust", "disband", "guide", "togglepvp"
+                    "trust", "untrust", "disband", "guide"
             ));
+            if (plugin.PVP_PROTECTION_SYSTEM_ENABLED) subCommands.add("togglepvp");
             if (plugin.AUTOCLAIM_ENABLED) subCommands.add("autoclaim");
             if (plugin.CLAIMFILL_ENABLED) subCommands.add("claimfill");
             if (plugin.VAULT_SYSTEM_ENABLED) subCommands.add("vault");
