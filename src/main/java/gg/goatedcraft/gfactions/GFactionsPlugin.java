@@ -8,6 +8,7 @@ import gg.goatedcraft.gfactions.data.FactionRank;
 import gg.goatedcraft.gfactions.data.Outpost;
 import gg.goatedcraft.gfactions.data.TeleportRequest;
 import gg.goatedcraft.gfactions.integration.DynmapManager;
+import gg.goatedcraft.gfactions.integration.FactionPlaceholders;
 import gg.goatedcraft.gfactions.listeners.PlayerChatListener;
 import gg.goatedcraft.gfactions.listeners.PlayerClaimBoundaryListener;
 import gg.goatedcraft.gfactions.listeners.PlayerDeathListener;
@@ -108,17 +109,16 @@ public class GFactionsPlugin extends JavaPlugin {
     public Pattern FACTION_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
     public boolean FACTION_CHAT_ENABLED = true;
     public boolean ALLY_CHAT_ENABLED = true;
-    // UPDATED DEFAULT for FACTION_CHAT_FORMAT
     public String FACTION_CHAT_FORMAT = "&8[&2{RANK}&8] &f{PLAYER_NAME}: &e{MESSAGE}";
     public String ALLY_CHAT_FORMAT = "&8[&6ALLY&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}";
-    public String PUBLIC_CHAT_PREFIX_FORMAT = "&7[{FACTION_NAME}&7] &r"; // Original, for full name prefix
-    public String PUBLIC_CHAT_TAG_FORMAT = "&8[{FACTION_TAG_COLOR}{FACTION_TAG}&8] "; // New, for short tag prefix
-    public int FACTION_TAG_LENGTH = 4; // New config for tag length
-    public boolean TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT = false; // New
+    public String PUBLIC_CHAT_PREFIX_FORMAT = "&7[{FACTION_NAME}&7] &r";
+    public String PUBLIC_CHAT_TAG_FORMAT = "&8[{FACTION_TAG_COLOR}{FACTION_TAG}&8] ";
+    public int FACTION_TAG_LENGTH = 4;
+    public boolean TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT = false;
 
-    public boolean ENEMY_SYSTEM_ENABLED = true; // Now directly here, was in faction_details
-    public boolean PVP_PROTECTION_SYSTEM_ENABLED = false; // NEW: Master PvP system toggle
-    public boolean PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT = false; // New
+    public boolean ENEMY_SYSTEM_ENABLED = true;
+    public boolean PVP_PROTECTION_SYSTEM_ENABLED = false;
+    public boolean PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT = false;
     public boolean VAULT_SYSTEM_ENABLED = true;
     public boolean OUTPOST_SYSTEM_ENABLED = true;
     public int MAX_OUTPOSTS_PER_FACTION = 1;
@@ -137,7 +137,6 @@ public class GFactionsPlugin extends JavaPlugin {
     private static final int CLAIM_FILL_MAX_POCKET_SIZE = 100;
     private static final int CLAIM_FILL_BFS_LIMIT = 500;
 
-    // NEW: Toggles for the /f who screen
     public boolean SHOW_WHO_OWNER = true;
     public boolean SHOW_WHO_POWER = true;
     public boolean SHOW_WHO_CLAIMS = true;
@@ -226,6 +225,15 @@ public class GFactionsPlugin extends JavaPlugin {
             getServer().getPluginManager().registerEvents(new PlayerTabDisplayListener(this), this);
             getLogger().info("Event listeners registered.");
 
+            // --- NEW: PlaceholderAPI Hook ---
+            if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
+                new FactionPlaceholders(this).register();
+                getLogger().info("Successfully hooked into PlaceholderAPI.");
+            } else {
+                getLogger().warning("PlaceholderAPI not found. Chat prefixes will not work with other chat plugins like EssentialsXChat. Using legacy chat formatting.");
+            }
+            // --- END NEW ---
+
             getLogger().info("Starting power regeneration task...");
             startPowerRegeneration();
             getLogger().info("Power regeneration task started/checked.");
@@ -309,7 +317,7 @@ public class GFactionsPlugin extends JavaPlugin {
 
         POWER_REGEN_OFFLINE_PER_HOUR = config.getInt("power.regeneration.offline_amount_per_hour", 2);
         POWER_REGEN_ONLINE_PER_HOUR = config.getInt("power.regeneration.online_amount_per_hour", 5);
-        powerRegenIntervalTicks = 20L * 60 * 5; // 5 minutes in ticks
+        powerRegenIntervalTicks = 20L * 60 * 5;
 
         POWER_LOSS_ON_DEATH_MEMBER = config.getInt("power.loss_on_death.member", 24);
         POWER_LOSS_ON_DEATH_ADMIN_OWNER = config.getInt("power.loss_on_death.admin_owner", 50);
@@ -320,7 +328,6 @@ public class GFactionsPlugin extends JavaPlugin {
         POWER_DECAY_CHECK_INTERVAL_HOURS = config.getLong("power.decay.check_interval_hours", 24);
         powerDecayCheckIntervalTicks = POWER_DECAY_CHECK_INTERVAL_HOURS * 60 * 60 * 20;
 
-
         COST_CLAIM_CHUNK = config.getInt("power.cost.claim_chunk", 5);
         COST_OVERCLAIM_CHUNK = config.getInt("power.cost.overclaim_chunk", 20);
         COST_DECLARE_ENEMY = config.getInt("power.cost.declare_enemy", 10);
@@ -329,7 +336,6 @@ public class GFactionsPlugin extends JavaPlugin {
         COST_PROMOTE_MEMBER = config.getInt("power.cost.promote_member", 0);
         COST_TRUST_PLAYER = config.getInt("power.cost.trust_player", 0);
         COST_CREATE_OUTPOST = config.getInt("power.cost.create_outpost", 50);
-
 
         COOLDOWN_ENEMY_NEUTRAL_HOURS = config.getLong("cooldowns.enemy_neutral_declaration_hours", 24);
         EXPIRATION_MEMBER_INVITE_MINUTES = config.getLong("cooldowns.member_invite_expiration_minutes", 5);
@@ -368,20 +374,17 @@ public class GFactionsPlugin extends JavaPlugin {
 
         FACTION_CHAT_ENABLED = config.getBoolean("faction_details.chat.faction_chat_enabled", true);
         ALLY_CHAT_ENABLED = config.getBoolean("faction_details.chat.ally_chat_enabled", true);
-        // UPDATED DEFAULT for FACTION_CHAT_FORMAT
         FACTION_CHAT_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.faction_chat_format", "&8[&2{RANK}&8] &f{PLAYER_NAME}: &e{MESSAGE}"));
         ALLY_CHAT_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.ally_chat_format", "&8[&6ALLY&8][&a{FACTION_NAME}&8] &f{PLAYER_NAME}: &e{MESSAGE}"));
         PUBLIC_CHAT_PREFIX_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_prefix_format", "&7[{FACTION_NAME}&7] &r"));
-        // Kept for potential other uses
         PUBLIC_CHAT_TAG_FORMAT = ChatColor.translateAlternateColorCodes('&', config.getString("faction_details.chat.public_chat_tag_format", "&8[{FACTION_TAG_COLOR}{FACTION_TAG}&8] "));
         FACTION_TAG_LENGTH = config.getInt("faction_details.chat.faction_tag_length", 4);
         TRUSTED_PLAYERS_CAN_HEAR_FACTION_CHAT = config.getBoolean("faction_details.chat.trusted_hear_faction_chat", false);
 
 
         ENEMY_SYSTEM_ENABLED = config.getBoolean("faction_details.enemy_system_enabled", true);
-        // If enemy system is disabled, ally system related features are also disabled.
         if (!ENEMY_SYSTEM_ENABLED) {
-            ALLY_CHAT_ENABLED = false; // Disable ally chat if enemy system is off
+            ALLY_CHAT_ENABLED = false;
         }
 
         PVP_PROTECTION_SYSTEM_ENABLED = config.getBoolean("faction_details.pvp_protection_system_enabled", false);
@@ -389,7 +392,6 @@ public class GFactionsPlugin extends JavaPlugin {
         VAULT_SYSTEM_ENABLED = config.getBoolean("faction_details.vault_system_enabled", true);
         OUTPOST_SYSTEM_ENABLED = config.getBoolean("faction_details.outpost_system_enabled", true);
         MAX_OUTPOSTS_PER_FACTION = config.getInt("faction_details.max_outposts", 1);
-
 
         BASE_CLAIM_LIMIT = config.getInt("claiming.base_claim_limit", 25);
         CLAIMS_PER_MEMBER_BONUS = config.getInt("claiming.claims_per_member_bonus", 10);
@@ -399,7 +401,6 @@ public class GFactionsPlugin extends JavaPlugin {
         ALLOW_END_CLAIMING = config.getBoolean("claiming.allow_end_claiming", false);
         AUTOCLAIM_ENABLED = config.getBoolean("claiming.autoclaim_enabled", true);
         CLAIMFILL_ENABLED = config.getBoolean("claiming.claimfill_enabled", true);
-
 
         MESSAGE_ENTERING_WILDERNESS = ChatColor.translateAlternateColorCodes('&', config.getString("messages.entering_wilderness", "&7Now entering Wilderness"));
         MESSAGE_ENTERING_FACTION_TERRITORY = ChatColor.translateAlternateColorCodes('&', config.getString("messages.entering_faction_territory", "&7Now entering {FACTION_RELATION_COLOR}{FACTION_NAME}"));
@@ -418,7 +419,6 @@ public class GFactionsPlugin extends JavaPlugin {
             FACTION_GUIDE_MESSAGES.add(ChatColor.YELLOW + "More help: " + ChatColor.WHITE + "Use /f help for a full command list.");
         }
 
-        // Load /f who screen toggles
         SHOW_WHO_OWNER = config.getBoolean("faction_details.who_screen_display.show_owner", true);
         SHOW_WHO_POWER = config.getBoolean("faction_details.who_screen_display.show_power", true);
         SHOW_WHO_CLAIMS = config.getBoolean("faction_details.who_screen_display.show_claims", true);
@@ -573,7 +573,6 @@ public class GFactionsPlugin extends JavaPlugin {
         return createFactionAndReturn(owner, name) != null;
     }
 
-
     @Nullable
     public Faction getFaction(String nameOrKey) {
         if (nameOrKey == null) return null;
@@ -636,7 +635,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
     }
 
-
     public boolean acceptMemberInvite(UUID playerUUID, String factionNameKeyToJoin) {
         Faction targetFaction = factionsByNameKey.get(factionNameKeyToJoin.toLowerCase());
         if (targetFaction == null) return false;
@@ -646,7 +644,7 @@ public class GFactionsPlugin extends JavaPlugin {
             return false;
         }
         if (getFactionByPlayer(playerUUID) != null) return false;
-        if (targetFaction.addMember(playerUUID, FactionRank.ASSOCIATE)) { // New members join as ASSOCIATE by default
+        if (targetFaction.addMember(playerUUID, FactionRank.ASSOCIATE)) {
             playerFactionMembership.put(playerUUID, targetFaction.getNameKey());
             invitesForFaction.remove(playerUUID);
             updateFactionActivity(targetFaction.getNameKey());
@@ -738,7 +736,7 @@ public class GFactionsPlugin extends JavaPlugin {
         }
 
         int maxClaims = faction.getMaxClaimsCalculated(this);
-        if (faction.getClaimLimitOverride() != -1) { // Check for override
+        if (faction.getClaimLimitOverride() != -1) {
             maxClaims = faction.getClaimLimitOverride();
         }
 
@@ -754,7 +752,6 @@ public class GFactionsPlugin extends JavaPlugin {
             }
         }
 
-
         if (currentOwnerFaction != null) {
             if (currentOwnerFaction.equals(faction)) {
                 if (player != null) player.sendMessage(ChatColor.YELLOW + "Your faction already owns this land.");
@@ -765,7 +762,6 @@ public class GFactionsPlugin extends JavaPlugin {
                 if (player != null) player.sendMessage(ChatColor.RED + "This land is claimed by " + currentOwnerFaction.getName() + ".");
                 return false;
             }
-            // Overclaim attempt
             if (!ENEMY_SYSTEM_ENABLED) {
                 if (player != null) player.sendMessage(ChatColor.RED + "Overclaiming is disabled because the enemy system is off.");
                 return false;
@@ -783,7 +779,7 @@ public class GFactionsPlugin extends JavaPlugin {
             claimedChunks.remove(cw);
             getLogger().info("Faction " + faction.getName() + " overclaimed chunk " + cw.toStringShort() + " from " + currentOwnerFaction.getName());
             notifyFaction(currentOwnerFaction, ChatColor.DARK_RED + "Your land at (" + cw.getX() + "," + cw.getZ() + ") in " + cw.getWorldName() + " has been overclaimed by " + faction.getName() + "!", null);
-        } else { // Land is wilderness
+        } else {
             if (faction.getCurrentPower() < COST_CLAIM_CHUNK && !isOutpostCreation) {
                 if (player != null) player.sendMessage(ChatColor.RED + "Not enough power to claim. Cost: " + COST_CLAIM_CHUNK);
                 return false;
@@ -883,7 +879,7 @@ public class GFactionsPlugin extends JavaPlugin {
 
 
     public boolean sendAllyRequest(Faction requesterFaction, Faction targetFaction) {
-        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) { // Also check ENEMY_SYSTEM_ENABLED
+        if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) {
             Player p = Bukkit.getPlayer(requesterFaction.getOwnerUUID());
             if(p != null) p.sendMessage(ChatColor.RED + "The alliance system is currently disabled.");
             return false;
@@ -917,7 +913,6 @@ public class GFactionsPlugin extends JavaPlugin {
 
     public boolean acceptAllyRequest(Faction acceptingFaction, Faction requestingFaction) {
         if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return false;
-        // Also check ENEMY_SYSTEM_ENABLED
         Map<String, Long> requestsForAccepting = pendingAllyRequests.get(acceptingFaction.getNameKey());
         if (requestsForAccepting == null || !requestsForAccepting.containsKey(requestingFaction.getNameKey()) || requestsForAccepting.get(requestingFaction.getNameKey()) < System.currentTimeMillis()) {
             return false;
@@ -953,7 +948,6 @@ public class GFactionsPlugin extends JavaPlugin {
 
     public void revokeAlliance(Faction faction1, Faction faction2) {
         if (!ALLY_CHAT_ENABLED || !ENEMY_SYSTEM_ENABLED) return;
-        // Also check ENEMY_SYSTEM_ENABLED
         boolean changed1 = faction1.removeAlly(faction2.getNameKey());
         boolean changed2 = faction2.removeAlly(faction1.getNameKey());
         if (changed1 || changed2) {
@@ -999,7 +993,6 @@ public class GFactionsPlugin extends JavaPlugin {
                     originalName = nameKey;
                 }
 
-
                 Location homeLoc = null;
                 if (facSec.isSet("homeLocation")) {
                     try {
@@ -1024,10 +1017,8 @@ public class GFactionsPlugin extends JavaPlugin {
                 Faction faction = new Faction(originalName, ownerUUID, homeLoc, this);
                 faction.setCurrentPower(facSec.getInt("currentPower"));
                 faction.setAccumulatedFractionalPower(facSec.getDouble("fractionalPower", 0.0));
-                faction.setClaimLimitOverride(facSec.getInt("claimLimitOverride", -1)); // Load claim limit override
+                faction.setClaimLimitOverride(facSec.getInt("claimLimitOverride", -1));
                 faction.setPvpProtected(facSec.getBoolean("pvpProtected", this.PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT));
-                // Load PvP status
-
 
                 ConfigurationSection membersSec = facSec.getConfigurationSection("members");
                 if (membersSec != null) {
@@ -1086,14 +1077,13 @@ public class GFactionsPlugin extends JavaPlugin {
                     ConfigurationSection enemyTimeSec = facSec.getConfigurationSection("enemyDeclareTimestamps");
                     if (enemyTimeSec != null) {
                         for (String enemyKey : enemyTimeSec.getKeys(false)) {
-                            faction.getEnemyDeclareTimestamps().put(enemyKey.toLowerCase(), enemyTimeSec.getLong(enemyKey));
+                            faction.getEnemyDeclareTimestampsInternal().put(enemyKey.toLowerCase(), enemyTimeSec.getLong(enemyKey));
                         }
                     }
                 }
-                if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
+                if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) {
                     facSec.getStringList("allies").forEach(faction::addAlly);
                 }
-
 
                 facSec.getStringList("trustedPlayers").forEach(uuidStr -> {
                     try { faction.addTrusted(UUID.fromString(uuidStr)); }
@@ -1139,7 +1129,7 @@ public class GFactionsPlugin extends JavaPlugin {
             }
         }
 
-        if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
+        if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) {
             ConfigurationSection allyRequestsSection = dataConfig.getConfigurationSection("pendingAllyRequests");
             if (allyRequestsSection != null) {
                 for (String targetFacKey : allyRequestsSection.getKeys(false)) {
@@ -1156,7 +1146,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
         getLogger().info("Loaded " + factionsByNameKey.size() + " factions, " + claimedChunks.size() + " claimed chunks.");
     }
-
 
     public void saveFactionsData() {
         YamlConfiguration dataConfig = new YamlConfiguration();
@@ -1175,10 +1164,7 @@ public class GFactionsPlugin extends JavaPlugin {
             facSec.set("currentPower", faction.getCurrentPower());
             facSec.set("fractionalPower", faction.getAccumulatedFractionalPower());
             facSec.set("claimLimitOverride", faction.getClaimLimitOverride());
-            // Save claim limit override
             facSec.set("pvpProtected", faction.isPvpProtected());
-            // Save PvP status
-
 
             ConfigurationSection membersSec = facSec.createSection("members");
             faction.getMembers().forEach((uuid, rank) -> membersSec.set(uuid.toString(), rank.name()));
@@ -1189,16 +1175,14 @@ public class GFactionsPlugin extends JavaPlugin {
                 facSec.set("outposts", faction.getOutposts().stream().map(Outpost::serialize).collect(Collectors.toList()));
             }
 
-
             if (ENEMY_SYSTEM_ENABLED) {
                 facSec.set("enemies", new ArrayList<>(faction.getEnemyFactionKeys()));
                 ConfigurationSection enemyTimeSec = facSec.createSection("enemyDeclareTimestamps");
                 faction.getEnemyDeclareTimestamps().forEach((key, time) -> enemyTimeSec.set(key.toLowerCase(), time));
             }
-            if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
+            if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) {
                 facSec.set("allies", new ArrayList<>(faction.getAllyFactionKeys()));
             }
-
 
             facSec.set("trustedPlayers", faction.getTrustedPlayers().stream().map(UUID::toString).collect(Collectors.toList()));
             if (VAULT_SYSTEM_ENABLED) {
@@ -1213,7 +1197,7 @@ public class GFactionsPlugin extends JavaPlugin {
                 invitesMap.forEach((playerUUID, expiry) -> specificInvites.set(playerUUID.toString(), expiry));
             }
         });
-        if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) { // Ally system depends on enemy system
+        if (ALLY_CHAT_ENABLED && ENEMY_SYSTEM_ENABLED) {
             ConfigurationSection allyRequestsSection = dataConfig.createSection("pendingAllyRequests");
             pendingAllyRequests.forEach((targetFacKey, requestsMap) -> {
                 if (!requestsMap.isEmpty()) {
@@ -1222,7 +1206,6 @@ public class GFactionsPlugin extends JavaPlugin {
                 }
             });
         }
-
 
         try {
             dataConfig.save(factionsDataFile);
@@ -1256,7 +1239,6 @@ public class GFactionsPlugin extends JavaPlugin {
             getLogger().log(Level.SEVERE, "Could not save faction_activity.yml", e);
         }
     }
-
 
     public void disbandFactionInternal(Faction factionToDisband, boolean isAdminAction) {
         String nameKey = factionToDisband.getNameKey();
@@ -1300,7 +1282,6 @@ public class GFactionsPlugin extends JavaPlugin {
         saveFactionActivityData();
     }
 
-
     public Map<String, Faction> getFactionsByNameKey() {
         return Collections.unmodifiableMap(factionsByNameKey);
     }
@@ -1311,7 +1292,6 @@ public class GFactionsPlugin extends JavaPlugin {
     public Map<ChunkWrapper, String> getClaimedChunksMapInternal() {
         return claimedChunks;
     }
-
 
     @Nullable
     public String getFactionOwningChunk(Chunk chunk) {
@@ -1327,7 +1307,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
         return null;
     }
-
 
     public Map<UUID, TeleportRequest> getActiveTeleportRequests() {
         return activeTeleportRequests;
@@ -1382,7 +1361,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
     }
 
-
     public boolean isPlayerAutoclaiming(UUID playerUUID) {
         return playersWithAutoclaim.contains(playerUUID);
     }
@@ -1395,7 +1373,6 @@ public class GFactionsPlugin extends JavaPlugin {
             return true;
         }
     }
-
 
     public void initiateTeleportWarmup(Player player, Location targetLocation, String successMessage) {
         UUID playerUUID = player.getUniqueId();
@@ -1546,14 +1523,12 @@ public class GFactionsPlugin extends JavaPlugin {
             return;
         }
 
-
-        int claimCostPerChunk = COST_CLAIM_CHUNK; // MODIFIED: Use the standard claim cost
+        int claimCostPerChunk = COST_CLAIM_CHUNK;
         int totalCost = toFill.size() * claimCostPerChunk;
         int maxClaims = faction.getMaxClaimsCalculated(this);
-        if (faction.getClaimLimitOverride() != -1) { // Check for override
+        if (faction.getClaimLimitOverride() != -1) {
             maxClaims = faction.getClaimLimitOverride();
         }
-
 
         if (faction.getClaimedChunks().size() + toFill.size() > maxClaims && maxClaims != Integer.MAX_VALUE) {
             player.sendMessage(ChatColor.RED + "Claiming this area (" + toFill.size() + " chunks) would exceed your faction's claim limit of " + maxClaims + ".");
@@ -1595,7 +1570,7 @@ public class GFactionsPlugin extends JavaPlugin {
         String prefix = "";
         if (playerFaction != null) {
             FactionRank rank = playerFaction.getRank(player.getUniqueId());
-            String rankPrefixString = ""; // For display in tab
+            String rankPrefixString = "";
             ChatColor factionColor = ChatColor.GRAY;
             if (rank != null) {
                 switch (rank) {
@@ -1617,7 +1592,6 @@ public class GFactionsPlugin extends JavaPlugin {
             }
             String factionTag = playerFaction.getName().substring(0, Math.min(playerFaction.getName().length(), FACTION_TAG_LENGTH)).toUpperCase();
             prefix = ChatColor.DARK_GRAY + "[" + factionColor + factionTag + ChatColor.DARK_GRAY + "] " + rankPrefixString + factionColor;
-            // Apply faction color to name too
 
             String baseName = player.getName();
             player.setPlayerListName(prefix + baseName + ChatColor.RESET);
@@ -1628,6 +1602,35 @@ public class GFactionsPlugin extends JavaPlugin {
             }
         }
     }
+
+    // --- NEW HELPER METHOD ---
+    /**
+     * Determines the relationship color between two factions.
+     * @param factionOne The first faction.
+     * @param factionTwo The second faction (can be null, treated as neutral).
+     * @return The ChatColor representing the relationship.
+     */
+    public ChatColor getFactionRelationColor(Faction factionOne, @Nullable Faction factionTwo) {
+        if (factionOne == null) {
+            return ChatColor.WHITE; // Should not happen if called correctly
+        }
+        if (factionTwo == null) {
+            return ChatColor.YELLOW; // Relation to wilderness/factionless is neutral
+        }
+        if (factionOne.equals(factionTwo)) {
+            return ChatColor.GREEN; // Same faction
+        }
+        if (ENEMY_SYSTEM_ENABLED) {
+            if (factionOne.isAlly(factionTwo.getNameKey())) {
+                return ChatColor.AQUA; // Allies
+            }
+            if (factionOne.isEnemy(factionTwo.getNameKey())) {
+                return ChatColor.RED; // Enemies
+            }
+        }
+        return ChatColor.YELLOW; // Neutral
+    }
+    // --- END NEW HELPER METHOD ---
 
     @Nullable
     public BukkitTask getPowerDecayTask() {
