@@ -65,6 +65,14 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             case "info":
                 handleWhoFaction(player, playerFaction, args.length > 1 ? args[1] : null);
                 break;
+            case "description":
+            case "desc":
+                if (args.length < 2) {
+                    player.sendMessage(ChatColor.RED + "Usage: /f description <new description>");
+                    return true;
+                }
+                handleSetDescription(player, playerFaction, String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
+                break;
             case "claim":
                 handleClaimChunk(player, playerFaction, false, null);
                 break;
@@ -287,9 +295,10 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + "/f create <name>" + ChatColor.GRAY + " - Create a new faction.");
         player.sendMessage(ChatColor.YELLOW + "/f list [page]" + ChatColor.GRAY + " - List all factions.");
         player.sendMessage(ChatColor.YELLOW + "/f who|info [faction]" + ChatColor.GRAY + " - View faction information.");
+        if (plugin.DESCRIPTION_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f desc <description>" + ChatColor.GRAY + " - Set your faction's description.");
         player.sendMessage(ChatColor.YELLOW + "/f claim" + ChatColor.GRAY + " - Claim chunk (Cost: " + COST_PLACEHOLDER + plugin.COST_CLAIM_CHUNK + ChatColor.GRAY + ").");
         if (plugin.AUTOCLAIM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f autoclaim" + ChatColor.GRAY + " - Toggle automatic chunk claiming.");
-        if (plugin.CLAIMFILL_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f claimfill" + ChatColor.GRAY + " - Attempt to claim surrounded chunks (Cost: " + COST_PLACEHOLDER + plugin.COST_CLAIM_CHUNK + "/chunk" + ChatColor.GRAY + ").");
+        if (plugin.CLAIMFILL_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f claimfill" + ChatColor.GRAY + " - Claim a pocket of land surrounded by your territory.");
         player.sendMessage(ChatColor.YELLOW + "/f unclaim" + ChatColor.GRAY + " - Unclaim the chunk you are standing in.");
         player.sendMessage(ChatColor.YELLOW + "/f sethome" + ChatColor.GRAY + " - Set your faction's home in claimed land.");
         player.sendMessage(ChatColor.YELLOW + "/f home [faction]" + ChatColor.GRAY + " - Teleport to faction home (or trusted/ally).");
@@ -451,6 +460,10 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         }
 
         player.sendMessage(ChatColor.GOLD + "--- " + ChatColor.AQUA + targetFaction.getName() + ChatColor.GOLD + " ---");
+
+        if (plugin.DESCRIPTION_ENABLED && plugin.SHOW_WHO_DESCRIPTION) {
+            player.sendMessage(ChatColor.YELLOW + "Description: " + ChatColor.WHITE + targetFaction.getDescription());
+        }
 
         if (plugin.SHOW_WHO_OWNER) {
             OfflinePlayer owner = Bukkit.getOfflinePlayer(targetFaction.getOwnerUUID());
@@ -1296,6 +1309,29 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         plugin.notifyFaction(targetFaction, ChatColor.RED + playerFaction.getName() + ChatColor.DARK_RED + " has declared your faction as an ENEMY!", null);
     }
 
+    private void handleSetDescription(Player player, @Nullable Faction playerFaction, String description) {
+        if (playerFaction == null) {
+            player.sendMessage(ChatColor.RED + "You are not in a faction.");
+            return;
+        }
+        if (!plugin.DESCRIPTION_ENABLED) {
+            player.sendMessage(ChatColor.RED + "Faction descriptions are disabled on this server.");
+            return;
+        }
+        FactionRank rank = playerFaction.getRank(player.getUniqueId());
+        if (rank == null || !rank.isAdminOrHigher()) {
+            player.sendMessage(ChatColor.RED + "You must be an admin or owner to set the faction description.");
+            return;
+        }
+        if (description.length() > plugin.DESCRIPTION_MAX_LENGTH) {
+            player.sendMessage(ChatColor.RED + "Description is too long. Max length: " + plugin.DESCRIPTION_MAX_LENGTH + " characters.");
+            return;
+        }
+        playerFaction.setDescription(description);
+        plugin.saveFactionsData();
+        playerFaction.broadcastMessage(ChatColor.GREEN + player.getName() + " has updated the faction description.", null);
+    }
+
     private void handleDisband(Player player, @Nullable Faction playerFaction) {
         if (playerFaction == null) {
             player.sendMessage(ChatColor.RED + "You are not in a faction to disband.");
@@ -1551,7 +1587,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             List<String> subCommands = new ArrayList<>(Arrays.asList(
                     "help", "create", "list", "who", "info", "invite", "uninvite", "kick", "leave", "accept",
                     "claim", "unclaim", "sethome", "home", "power", "setrank", "leader", "owner",
-                    "trust", "untrust", "disband", "guide"
+                    "trust", "untrust", "disband", "guide", "desc", "description"
             ));
             if (plugin.PVP_PROTECTION_SYSTEM_ENABLED) subCommands.add("togglepvp");
             if (plugin.AUTOCLAIM_ENABLED) subCommands.add("autoclaim");

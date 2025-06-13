@@ -103,7 +103,6 @@ public class DynmapManager {
 
     public void updateFactionClaimsVisual(Faction faction) {
         if (!enabled || factionMarkerSet == null || faction == null) return;
-        // plugin.getLogger().info("Updating Dynmap visuals for faction: " + faction.getName()); // Can be noisy
 
         // Remove old markers for this specific faction
         List<String> oldMarkerIdsForFaction = factionMarkerIds.remove(faction.getNameKey());
@@ -139,8 +138,6 @@ public class DynmapManager {
 
                 List<Point> polygonPoints = calculateOutline(area);
                 if (polygonPoints.isEmpty() || polygonPoints.size() < 3) {
-                    // plugin.getLogger().warning("Could not form valid polygon for an area in " + faction.getName() + ", world " + worldName + ". Area chunks: " + area.stream().map(ChunkWrapper::toStringShort).collect(Collectors.joining(", ")));
-                    // Fallback: draw individual chunks for this problematic area
                     for(ChunkWrapper cw_fallback : area){
                         drawIndividualChunkMarker(faction, cw_fallback, newMarkerIdsForThisFaction, worldName, areaIndex++);
                     }
@@ -195,7 +192,6 @@ public class DynmapManager {
 
         int factionColor = getFactionDisplayColor(faction, null);
         marker.setFillStyle(plugin.DYNMAP_FILL_OPACITY, factionColor);
-        // Use a less prominent stroke for individual fallback chunks
         marker.setLineStyle(Math.max(1, plugin.DYNMAP_STROKE_WEIGHT / 2), plugin.DYNMAP_STROKE_OPACITY / 1.5, factionColor);
         marker.setDescription(generatePopupDescription(faction));
         markerIdList.add(markerId);
@@ -217,15 +213,13 @@ public class DynmapManager {
     private static class Edge {
         Point p1, p2;
         Edge(Point p1, Point p2) { this.p1 = p1; this.p2 = p2; }
-        // Order doesn't matter for edge equality
         @Override public boolean equals(Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             Edge edge = (Edge) o;
             return (p1.equals(edge.p1) && p2.equals(edge.p2)) || (p1.equals(edge.p2) && p2.equals(edge.p1));
         }
-        // HashCode must be consistent with equals: if a.equals(b) then a.hashCode()==b.hashCode()
-        @Override public int hashCode() { return p1.hashCode() ^ p2.hashCode(); } // XOR is commutative
+        @Override public int hashCode() { return p1.hashCode() ^ p2.hashCode(); }
         @Override public String toString() { return p1.toString() + " -> " + p2.toString(); }
     }
 
@@ -235,17 +229,15 @@ public class DynmapManager {
         for (ChunkWrapper cw : areaChunks) {
             int x = cw.getX() * 16;
             int z = cw.getZ() * 16;
-            Point pNW = new Point(x, z);         // Top-left
-            Point pNE = new Point(x + 16, z);     // Top-right
-            Point pSE = new Point(x + 16, z + 16); // Bottom-right
-            Point pSW = new Point(x, z + 16);     // Bottom-left
+            Point pNW = new Point(x, z);
+            Point pNE = new Point(x + 16, z);
+            Point pSE = new Point(x + 16, z + 16);
+            Point pSW = new Point(x, z + 16);
 
-            // Edges (ensure consistent ordering for map keys if not using custom Edge equals/hashCode that ignores order)
-            // With the current Edge equals/hashCode, order doesn't strictly matter for map key storage, but it's good practice.
             Edge top = new Edge(pNW, pNE);
             Edge right = new Edge(pNE, pSE);
-            Edge bottom = new Edge(pSW, pSE); // For bottom, SE should be p2 if p1 is SW for consistency
-            Edge left = new Edge(pNW, pSW);   // For left, SW should be p2 if p1 is NW
+            Edge bottom = new Edge(pSW, pSE);
+            Edge left = new Edge(pNW, pSW);
 
             edgeCounts.put(top, edgeCounts.getOrDefault(top, 0) + 1);
             edgeCounts.put(right, edgeCounts.getOrDefault(right, 0) + 1);
@@ -255,7 +247,7 @@ public class DynmapManager {
 
         List<Edge> outlineEdges = new ArrayList<>();
         for (Map.Entry<Edge, Integer> entry : edgeCounts.entrySet()) {
-            if (entry.getValue() == 1) { // Edges that appear once are on the perimeter
+            if (entry.getValue() == 1) {
                 outlineEdges.add(entry.getKey());
             }
         }
@@ -268,7 +260,7 @@ public class DynmapManager {
         Point currentPoint = currentEdge.p2;
         orderedPoints.add(currentPoint);
 
-        int safetyBreak = outlineEdges.size() + 2; // Max iterations to prevent infinite loop
+        int safetyBreak = outlineEdges.size() + 2;
         while (!outlineEdges.isEmpty() && safetyBreak-- > 0) {
             boolean foundNext = false;
             for (int i = 0; i < outlineEdges.size(); i++) {
@@ -288,22 +280,16 @@ public class DynmapManager {
                 }
             }
             if (!foundNext) {
-                // This can happen if there are multiple disjoint outlines (e.g. a hole in the claim)
-                // Or if the area is not truly contiguous in a way the algorithm expects.
-                // For simple polygons, this should complete.
-                // plugin.getLogger().warning("Could not find next connected edge for outline. Points so far: " + orderedPoints.size() + ". Remaining edges: " + outlineEdges.size());
                 break;
             }
         }
 
-        // Remove the last point if it's the same as the first (closing the polygon)
         if (orderedPoints.size() > 1 && orderedPoints.get(0).equals(orderedPoints.get(orderedPoints.size() - 1))) {
             orderedPoints.remove(orderedPoints.size() - 1);
         }
 
         if (orderedPoints.size() < 3) {
-            // plugin.getLogger().warning("Outline resulted in less than 3 points, cannot form an area. Points: " + orderedPoints.size());
-            return Collections.emptyList(); // Not a valid polygon
+            return Collections.emptyList();
         }
         return orderedPoints;
     }
@@ -324,8 +310,8 @@ public class DynmapManager {
 
                 while (!queue.isEmpty()) {
                     ChunkWrapper current = queue.poll();
-                    int[] dX = {0, 0, 1, -1}; // dx for neighbors
-                    int[] dZ = {1, -1, 0, 0}; // dz for neighbors
+                    int[] dX = {0, 0, 1, -1};
+                    int[] dZ = {1, -1, 0, 0};
 
                     for (int i = 0; i < 4; i++) {
                         ChunkWrapper neighbor = new ChunkWrapper(current.getWorldName(), current.getX() + dX[i], current.getZ() + dZ[i]);
@@ -343,22 +329,7 @@ public class DynmapManager {
     }
 
     private int getFactionDisplayColor(Faction faction, @Nullable Player viewingPlayer) {
-        if (faction == null) return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM; // Should not happen if called with valid faction
-        // For now, we don't have a 'viewingPlayer' context for general map updates.
-        // If we implement per-player map views, this would change.
-        // For the generic map, we'll assume a neutral perspective or faction's own color.
-        // Let's use default_claim_color for simplicity, assuming it's the faction's "own" color.
-        // A more advanced setup might color based on the viewer's relation if Dynmap supports it easily.
-
-        // The config currently has: default_claim_color (for player's own), enemy, ally, neutral.
-        // When 'viewingPlayer' is null (global map view), we need a strategy.
-        // Simplest: use a single color for all claims, or try to use the default.
-        // Let's assume for now the colors are defined as how any viewer sees them.
-        // If a faction is viewing, they'd see their own as green, enemies red, allies blue.
-        // If no specific viewer, perhaps use a generic "claimed land" color, or neutral.
-        // The current structure seems to imply these colors are relative to *some* viewer.
-        // Since this method is called without a viewer for global updates, we'll use neutral as a fallback,
-        // but ideally, this function would be called by a viewer-specific update path if colors are relative.
+        if (faction == null) return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM;
 
         if (viewingPlayer != null) {
             Faction viewerFaction = plugin.getFactionByPlayer(viewingPlayer.getUniqueId());
@@ -368,16 +339,13 @@ public class DynmapManager {
                 if (plugin.ENEMY_SYSTEM_ENABLED && viewerFaction.isEnemy(faction.getNameKey())) return plugin.DYNMAP_COLOR_ENEMY_CLAIM;
             }
         }
-        // Fallback for no specific viewer or no special relation: use neutral color or a default faction color.
-        // If we want factions to always have *their* color regardless of viewer, this logic needs rethinking.
-        // For now, using neutral for non-related or no-viewer context.
-        return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM; // Or DYNMAP_COLOR_DEFAULT_CLAIM if you want factions to have a consistent color.
+        return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM;
     }
 
     private int getColorFromHexString(String hex, int defaultColor) {
         if (hex == null || hex.trim().isEmpty()) return defaultColor;
         try {
-            return Integer.decode(hex.trim()); // Use trim
+            return Integer.decode(hex.trim());
         } catch (NumberFormatException e) {
             plugin.getLogger().warning("Invalid hex color string '" + hex + "'. Defaulting for Dynmap stroke. Error: " + e.getMessage());
             return defaultColor;
@@ -389,9 +357,14 @@ public class DynmapManager {
         StringBuilder sb = new StringBuilder();
         sb.append("<div style=\"font-weight:bold;font-size:120%;color:#FFFFFF;background-color:#333333;padding:3px;\">")
                 .append(ChatColor.stripColor(faction.getName())).append("</div>");
+
+        if (plugin.DESCRIPTION_ENABLED && faction.getDescription() != null && !faction.getDescription().isEmpty()) {
+            sb.append(ChatColor.stripColor(faction.getDescription())).append("<br>");
+        }
+
         OfflinePlayer owner = Bukkit.getOfflinePlayer(faction.getOwnerUUID());
         sb.append("Owner: ").append(owner.getName() != null ? owner.getName() : "Unknown").append("<br>");
-        sb.append("Power: ").append(faction.getCurrentPower()).append(" / ").append(faction.getMaxPowerCalculated(plugin)).append("<br>"); // Corrected
+        sb.append("Power: ").append(faction.getCurrentPower()).append(" / ").append(faction.getMaxPowerCalculated(plugin)).append("<br>");
         sb.append("Members: ").append(faction.getTotalSize()).append("<br>");
         if (plugin.ALLY_CHAT_ENABLED && !faction.getAllyFactionKeys().isEmpty()) {
             sb.append("Allies: ").append(faction.getAllyFactionKeys().stream()
@@ -403,9 +376,9 @@ public class DynmapManager {
                     .map(key -> { Faction f = plugin.getFaction(key); return f != null ? ChatColor.stripColor(f.getName()) : key; })
                     .collect(Collectors.joining(", "))).append("<br>");
         }
-        int maxClaims = faction.getMaxClaimsCalculated(plugin); // Corrected
+        int maxClaims = faction.getMaxClaimsCalculated(plugin);
         sb.append("Claims: ").append(faction.getClaimedChunks().size());
-        if (maxClaims != Integer.MAX_VALUE) { // Only show max if not effectively unlimited
+        if (maxClaims != Integer.MAX_VALUE) {
             sb.append(" / ").append(maxClaims);
         }
 
@@ -422,21 +395,17 @@ public class DynmapManager {
 
     public void updateFactionRelations(Faction f1, Faction f2) {
         if (!enabled) return;
-        // plugin.getLogger().info("Dynmap: Updating relations appearance for " + f1.getName() + " and " + f2.getName());
-        updateFactionClaimsVisual(f1); // This will re-evaluate colors based on current relations
+        updateFactionClaimsVisual(f1);
         updateFactionClaimsVisual(f2);
     }
 
     public void updateFactionAppearance(Faction faction) {
         if (!enabled || factionMarkerSet == null || faction == null) return;
-        // plugin.getLogger().info("Dynmap: Updating general appearance for " + faction.getName());
-        updateFactionClaimsVisual(faction); // This effectively redraws the faction with current info
+        updateFactionClaimsVisual(faction);
     }
 
-    // This method might be redundant if updateFactionClaimsVisual is called upon faction creation by the plugin logic
     public void addFactionToMap(Faction faction) {
         if (!enabled || faction == null) return;
-        // plugin.getLogger().info("Dynmap: Faction " + faction.getName() + " registered. Initial claims will be drawn.");
         updateFactionClaimsVisual(faction);
     }
 
@@ -451,13 +420,10 @@ public class DynmapManager {
                 }
             }
         }
-        // plugin.getLogger().info("Dynmap: All visual claims removed from map for disbanded faction: " + faction.getName());
     }
 
-    // This method might be redundant if updateFactionClaimsVisual is called after an unclaim operation by the plugin logic
     public void updateMapForUnclaim(Faction faction, ChunkWrapper unclaimedChunk) {
         if (!enabled || faction == null || unclaimedChunk == null) return;
-        // plugin.getLogger().info("Dynmap: Updating map after unclaim of " + unclaimedChunk.toStringShort() + " by " + faction.getName());
-        updateFactionClaimsVisual(faction); // Redraw the faction which now has one less claim
+        updateFactionClaimsVisual(faction);
     }
 }

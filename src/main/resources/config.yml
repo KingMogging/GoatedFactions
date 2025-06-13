@@ -4,6 +4,7 @@
 power:
   initial: 100             # Power a new faction (owner) starts with
   per_member_bonus: 100    # Max power increase per member (including owner)
+  max_power: 1000          # NEW: The absolute maximum power a faction can achieve, regardless of member count.
   # Power Regeneration (per hour)
   regeneration:
     offline_amount_per_hour: 2
@@ -64,6 +65,9 @@ faction_details:
   name_min_length: 3
   name_max_length: 16
   name_regex: "^[a-zA-Z0-9_]+$" # Allows letters, numbers, underscore
+  description:
+    enabled: true
+    max_length: 100
   # Chat Settings
   chat:
     faction_chat_enabled: true
@@ -84,6 +88,7 @@ faction_details:
     show_claims: true
     show_pvp_status: true
     show_home_location: false # Disabled by default as requested
+    show_description: true
     show_leadership_list: true
     show_members_list: true
     show_associates_list: true
@@ -97,6 +102,7 @@ claiming:
   # Claim Limits
   base_claim_limit: 25            # Initial number of claims a new faction gets
   claims_per_member_bonus: 10     # Additional claims per member (including owner)
+  max_claim_limit: 1000           # NEW: The absolute maximum number of land chunks a faction can claim.
   # Spawn Protection
   prevent_claim_near_spawn: true
   spawn_protection_radius_chunks: 3 # Radius in CHUNKS around server spawn where claiming is prevented
@@ -107,6 +113,7 @@ claiming:
   autoclaim_enabled: true
   # Claim Fill
   claimfill_enabled: true
+  claimfill_max_size: 100 # NEW: Maximum radius of chunks to check for a fillable pocket.
   # disallowed_claim_worlds: [] # Example: ["event_world", "minigame_world_nether"]
 
 # Messages (can be expanded)

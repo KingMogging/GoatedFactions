@@ -7,11 +7,9 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
-// Added missing import
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -92,6 +90,14 @@ public class ZoneProtectionListener implements Listener {
         return false;
     }
 
+    /**
+     * Checks if a material corresponds to a block that holds an inventory.
+     * NOTE: This method temporarily changes a block in the world to perform this check.
+     * This is a workaround and may have side effects if other plugins monitor block changes,
+     * though it attempts to be safe by not causing physics updates.
+     * @param material The material to check.
+     * @return True if the material's block state is an InventoryHolder.
+     */
     private boolean clickedBlockIsInventoryHolder(Material material) {
         try {
             if (Bukkit.getWorlds().isEmpty()) {
@@ -99,19 +105,14 @@ public class ZoneProtectionListener implements Listener {
                 return false;
             }
             World world = Bukkit.getWorlds().get(0);
+            // A location far away that is unlikely to be loaded or used.
             Location tempLoc = new Location(world, 0, world.getMinHeight() + 64, 0);
-            // Ensure Location is org.bukkit.Location
 
-            // Check if the chunk is loaded before getting the block to avoid loading it.
-            // However, for a simple type check, this might be less critical than for operations that cause updates.
-            // Block block = world.getBlockAt(tempLoc.getBlockX(), tempLoc.getBlockY(), tempLoc.getBlockZ()); // Alternative way to get block
             Block block = tempLoc.getBlock();
-            // Simpler way to get block from Location
-
             Material originalType = block.getType();
-            // Temporarily set the type to check its state. This is a common workaround.
-            // Be cautious if other plugins listen to BlockPhysicsEvent or similar, though 'false' should prevent most updates.
-            block.setType(material, false);
+
+            // Temporarily set the type to check its state.
+            block.setType(material, false); // false prevents physics updates
             boolean isHolder = block.getState() instanceof InventoryHolder;
             block.setType(originalType, false); // Revert to original type
             return isHolder;

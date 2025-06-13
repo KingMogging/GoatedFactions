@@ -23,7 +23,7 @@ public class FactionPlaceholders extends PlaceholderExpansion {
 
     @Override
     public @NotNull String getAuthor() {
-        return "GoatedCraft"; // You can change this
+        return "GoatedCraft";
     }
 
     @Override
@@ -53,19 +53,16 @@ public class FactionPlaceholders extends PlaceholderExpansion {
             return playerFaction.getName().substring(0, Math.min(playerFaction.getName().length(), plugin.FACTION_TAG_LENGTH));
         }
 
-        // This is the placeholder you'll likely use in EssentialsXChat
         // Example: %gfactions_prefix%
         if (params.equalsIgnoreCase("prefix")) {
             if (playerFaction == null) return "";
 
-            // Using the helper method from the main plugin class
-            ChatColor factionColor = plugin.getFactionRelationColor(playerFaction, playerFaction); // Gets the "self" color (Green)
+            ChatColor factionColor = plugin.getFactionRelationColor(playerFaction, playerFaction); // "self" color
 
             return plugin.PUBLIC_CHAT_PREFIX_FORMAT
                     .replace("{FACTION_NAME}", factionColor + playerFaction.getName() + ChatColor.RESET);
         }
 
-        // A tag-based prefix
         // Example: %gfactions_tag_prefix%
         if (params.equalsIgnoreCase("tag_prefix")) {
             if (playerFaction == null) return "";
@@ -82,31 +79,22 @@ public class FactionPlaceholders extends PlaceholderExpansion {
             return ""; // Return empty for all other placeholders if no faction
         }
 
-        if (params.equalsIgnoreCase("power")) {
-            return String.valueOf(playerFaction.getCurrentPower());
+        switch (params.toLowerCase()) {
+            case "power":
+                return String.valueOf(playerFaction.getCurrentPower());
+            case "power_max":
+                return String.valueOf(playerFaction.getMaxPowerCalculated(plugin));
+            case "claims":
+                return String.valueOf(playerFaction.getClaimedChunks().size());
+            case "claims_max":
+                int maxClaims = playerFaction.getMaxClaimsCalculated(plugin);
+                return maxClaims == Integer.MAX_VALUE ? "Unlimited" : String.valueOf(maxClaims);
+            case "members_online":
+                return String.valueOf(playerFaction.getMemberUUIDsOnly().stream().filter(uuid -> plugin.getServer().getPlayer(uuid) != null).count());
+            case "members_total":
+                return String.valueOf(playerFaction.getTotalSize());
+            default:
+                return null; // Placeholder is unknown
         }
-
-        if (params.equalsIgnoreCase("power_max")) {
-            return String.valueOf(playerFaction.getMaxPowerCalculated(plugin));
-        }
-
-        if (params.equalsIgnoreCase("claims")) {
-            return String.valueOf(playerFaction.getClaimedChunks().size());
-        }
-
-        if (params.equalsIgnoreCase("claims_max")) {
-            int maxClaims = playerFaction.getMaxClaimsCalculated(plugin);
-            return maxClaims == Integer.MAX_VALUE ? "Unlimited" : String.valueOf(maxClaims);
-        }
-
-        if (params.equalsIgnoreCase("members_online")) {
-            return String.valueOf(playerFaction.getMemberUUIDsOnly().stream().filter(uuid -> plugin.getServer().getPlayer(uuid) != null).count());
-        }
-
-        if (params.equalsIgnoreCase("members_total")) {
-            return String.valueOf(playerFaction.getTotalSize());
-        }
-
-        return null; // Placeholder is unknown
     }
 }

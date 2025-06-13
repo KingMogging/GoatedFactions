@@ -2,9 +2,9 @@ name: GFactions
 version: ${project.version}
 main: gg.goatedcraft.gfactions.GFactionsPlugin
 api-version: '1.21'
-author: YourNameOrAlias
+author: GoatedCraft
 description: A feature-rich faction plugin for Purpur servers.
-softdepend: [dynmap, Vault, PlaceholderAPI] # Added PlaceholderAPI here
+softdepend: [dynmap, Vault, PlaceholderAPI]
 
 commands:
   faction:
@@ -33,6 +33,6 @@ permissions:
   goatedfactions.admin.spy:
     description: Allows seeing faction-only chat messages.
     default: op
-  goatedfactions.admin.allyspy: # Added permission for ally chat spy
+  goatedfactions.admin.allyspy:
     description: Allows seeing ally-only chat messages.
     default: op
