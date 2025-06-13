@@ -1029,6 +1029,8 @@ public class GFactionsPlugin extends JavaPlugin {
                 faction.setAccumulatedFractionalPower(facSec.getDouble("fractionalPower", 0.0));
                 faction.setClaimLimitOverride(facSec.getInt("claimLimitOverride", -1));
                 faction.setPvpProtected(facSec.getBoolean("pvpProtected", this.PVP_IN_TERRITORY_PROTECTION_ENABLED_BY_DEFAULT));
+                // Load custom color
+                faction.setDynmapColorHex(facSec.getString("dynmapColorHex", null));
 
                 ConfigurationSection membersSec = facSec.getConfigurationSection("members");
                 if (membersSec != null) {
@@ -1176,6 +1178,8 @@ public class GFactionsPlugin extends JavaPlugin {
             facSec.set("fractionalPower", faction.getAccumulatedFractionalPower());
             facSec.set("claimLimitOverride", faction.getClaimLimitOverride());
             facSec.set("pvpProtected", faction.isPvpProtected());
+            // Save custom color
+            facSec.set("dynmapColorHex", faction.getDynmapColorHex());
 
             ConfigurationSection membersSec = facSec.createSection("members");
             faction.getMembers().forEach((uuid, rank) -> membersSec.set(uuid.toString(), rank.name()));
@@ -1385,7 +1389,6 @@ public class GFactionsPlugin extends JavaPlugin {
         }
     }
 
-    // Getter for the autoclaim set
     public Set<UUID> getPlayersWithAutoclaim() {
         return playersWithAutoclaim;
     }

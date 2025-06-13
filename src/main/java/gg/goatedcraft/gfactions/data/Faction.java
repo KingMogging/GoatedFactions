@@ -15,6 +15,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @SuppressWarnings("deprecation") // For OfflinePlayer methods
 public class Faction {
@@ -41,8 +42,11 @@ public class Faction {
     private long lastOnlineTime;
     private int claimLimitOverride = -1;
     private boolean pvpProtected;
+    private String dynmapColorHex; // NEW: Field for custom Dynmap color
 
     private transient GFactionsPlugin plugin;
+    private static final Pattern HEX_COLOR_PATTERN = Pattern.compile("^0x[0-9a-fA-F]{6}$");
+
 
     public Faction(String name, UUID ownerUUID, @Nullable Location initialHomeLocation, GFactionsPlugin pluginInstance) {
         this.originalName = name;
@@ -50,6 +54,7 @@ public class Faction {
         this.ownerUUID = ownerUUID;
         this.plugin = pluginInstance;
         this.description = "A new faction.";
+        this.dynmapColorHex = null; // Default to null (no custom color)
 
         this.members = new ConcurrentHashMap<>();
         this.members.put(ownerUUID, FactionRank.OWNER);
@@ -112,6 +117,7 @@ public class Faction {
     public String getNameKey() { return nameKey; }
     public UUID getOwnerUUID() { return ownerUUID; }
     public String getDescription() { return description; }
+    @Nullable public String getDynmapColorHex() { return dynmapColorHex; } // NEW: Getter
     public Map<UUID, FactionRank> getMembers() { return Collections.unmodifiableMap(members); }
     public Map<UUID, FactionRank> getMembersRaw() { return members; }
     public Set<UUID> getMemberUUIDsOnly() { return Collections.unmodifiableSet(members.keySet()); }
@@ -148,7 +154,6 @@ public class Faction {
 
         int calculatedPower = Math.max(1, members.size()) * currentPlugin.POWER_PER_MEMBER_BONUS;
 
-        // Enforce the absolute maximum power from the config
         if (currentPlugin.MAX_POWER_ABSOLUTE > 0) {
             return Math.min(calculatedPower, currentPlugin.MAX_POWER_ABSOLUTE);
         }
@@ -203,6 +208,21 @@ public class Faction {
                 plugin.getDynmapManager().updateFactionAppearance(this);
             }
         }
+    }
+
+    // NEW: Setter for custom Dynmap color
+    public boolean setDynmapColorHex(@Nullable String hexColor) {
+        if (hexColor == null || hexColor.equalsIgnoreCase("reset") || hexColor.equalsIgnoreCase("clear")) {
+            this.dynmapColorHex = null;
+            if (plugin != null) plugin.updateFactionActivity(this.nameKey);
+            return true;
+        }
+        if (HEX_COLOR_PATTERN.matcher(hexColor).matches()) {
+            this.dynmapColorHex = hexColor;
+            if (plugin != null) plugin.updateFactionActivity(this.nameKey);
+            return true;
+        }
+        return false; // Invalid format
     }
 
     public void setClaimLimitOverride(int limit) {
@@ -786,7 +806,6 @@ public class Faction {
 
         int calculatedClaims = currentPlugin.BASE_CLAIM_LIMIT + (Math.max(0, members.size() - 1) * currentPlugin.CLAIMS_PER_MEMBER_BONUS);
 
-        // Enforce the absolute maximum claims from the config
         if (currentPlugin.MAX_CLAIM_LIMIT_ABSOLUTE > 0) {
             return Math.min(calculatedClaims, currentPlugin.MAX_CLAIM_LIMIT_ABSOLUTE);
         }

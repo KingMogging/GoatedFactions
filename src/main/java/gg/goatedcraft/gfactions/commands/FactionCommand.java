@@ -73,6 +73,13 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
                 }
                 handleSetDescription(player, playerFaction, String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
                 break;
+            case "setcolor": // NEW COMMAND
+                if (args.length < 2) {
+                    player.sendMessage(ChatColor.RED + "Usage: /f setcolor <0xHexCode|reset>");
+                    return true;
+                }
+                handleSetColor(player, playerFaction, args[1]);
+                break;
             case "claim":
                 handleClaimChunk(player, playerFaction, false, null);
                 break;
@@ -296,6 +303,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.YELLOW + "/f list [page]" + ChatColor.GRAY + " - List all factions.");
         player.sendMessage(ChatColor.YELLOW + "/f who|info [faction]" + ChatColor.GRAY + " - View faction information.");
         if (plugin.DESCRIPTION_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f desc <description>" + ChatColor.GRAY + " - Set your faction's description.");
+        player.sendMessage(ChatColor.YELLOW + "/f setcolor <0xHex|reset>" + ChatColor.GRAY + " - Set your faction's Dynmap color.");
         player.sendMessage(ChatColor.YELLOW + "/f claim" + ChatColor.GRAY + " - Claim chunk (Cost: " + COST_PLACEHOLDER + plugin.COST_CLAIM_CHUNK + ChatColor.GRAY + ").");
         if (plugin.AUTOCLAIM_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f autoclaim" + ChatColor.GRAY + " - Toggle automatic chunk claiming.");
         if (plugin.CLAIMFILL_ENABLED) player.sendMessage(ChatColor.YELLOW + "/f claimfill" + ChatColor.GRAY + " - Claim a pocket of land surrounded by your territory.");
@@ -494,6 +502,12 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             } else {
                 player.sendMessage(ChatColor.YELLOW + "Home: " + ChatColor.WHITE + "Not set");
             }
+        }
+
+        // Display custom color in /f who
+        String customColor = targetFaction.getDynmapColorHex();
+        if (customColor != null) {
+            player.sendMessage(ChatColor.YELLOW + "Map Color: " + ChatColor.WHITE + customColor);
         }
 
         List<String> adminList = new ArrayList<>();
@@ -1332,6 +1346,33 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
         playerFaction.broadcastMessage(ChatColor.GREEN + player.getName() + " has updated the faction description.", null);
     }
 
+    private void handleSetColor(Player player, @Nullable Faction playerFaction, String hexColor) {
+        if (playerFaction == null) {
+            player.sendMessage(ChatColor.RED + "You must be in a faction to set its color.");
+            return;
+        }
+        FactionRank rank = playerFaction.getRank(player.getUniqueId());
+        if (rank == null || !rank.isAdminOrHigher()) {
+            player.sendMessage(ChatColor.RED + "You must be an admin or owner to set the faction color.");
+            return;
+        }
+
+        if (playerFaction.setDynmapColorHex(hexColor)) {
+            plugin.saveFactionsData();
+            if (plugin.getDynmapManager() != null && plugin.getDynmapManager().isEnabled()) {
+                plugin.getDynmapManager().updateFactionAppearance(playerFaction);
+            }
+            if (hexColor.equalsIgnoreCase("reset") || hexColor.equalsIgnoreCase("clear")) {
+                player.sendMessage(ChatColor.GREEN + "Faction map color has been reset to the default.");
+            } else {
+                player.sendMessage(ChatColor.GREEN + "Faction map color has been set to " + ChatColor.WHITE + hexColor + ChatColor.GREEN + ".");
+            }
+        } else {
+            player.sendMessage(ChatColor.RED + "Invalid format. Please use a hex color code like '0xFF0000' (for red).");
+        }
+    }
+
+
     private void handleDisband(Player player, @Nullable Faction playerFaction) {
         if (playerFaction == null) {
             player.sendMessage(ChatColor.RED + "You are not in a faction to disband.");
@@ -1587,7 +1628,7 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             List<String> subCommands = new ArrayList<>(Arrays.asList(
                     "help", "create", "list", "who", "info", "invite", "uninvite", "kick", "leave", "accept",
                     "claim", "unclaim", "sethome", "home", "power", "setrank", "leader", "owner",
-                    "trust", "untrust", "disband", "guide", "desc", "description"
+                    "trust", "untrust", "disband", "guide", "desc", "description", "setcolor"
             ));
             if (plugin.PVP_PROTECTION_SYSTEM_ENABLED) subCommands.add("togglepvp");
             if (plugin.AUTOCLAIM_ENABLED) subCommands.add("autoclaim");
@@ -1603,7 +1644,10 @@ public class FactionCommand implements CommandExecutor, TabCompleter {
             subCommands.stream().filter(s -> s.startsWith(currentArg)).forEach(completions::add);
         } else if (args.length >= 2) {
             String mainSubCmd = args[0].toLowerCase();
-            if (mainSubCmd.equals("outpost") && plugin.OUTPOST_SYSTEM_ENABLED) {
+            if (mainSubCmd.equals("setcolor") && args.length == 2) {
+                completions.add("0x");
+                completions.add("reset");
+            } else if (mainSubCmd.equals("outpost") && plugin.OUTPOST_SYSTEM_ENABLED) {
                 if (args.length == 2) {
                     Arrays.asList("create", "sethome", "home", "delete", "help").stream()
                             .filter(s -> s.startsWith(currentArg)).forEach(completions::add);

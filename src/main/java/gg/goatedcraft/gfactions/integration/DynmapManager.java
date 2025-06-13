@@ -331,6 +331,12 @@ public class DynmapManager {
     private int getFactionDisplayColor(Faction faction, @Nullable Player viewingPlayer) {
         if (faction == null) return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM;
 
+        // NEW: Prioritize the faction's custom color if it's set
+        String customColorHex = faction.getDynmapColorHex();
+        if (customColorHex != null) {
+            return getColorFromHexString(customColorHex, plugin.DYNMAP_COLOR_DEFAULT_CLAIM);
+        }
+
         if (viewingPlayer != null) {
             Faction viewerFaction = plugin.getFactionByPlayer(viewingPlayer.getUniqueId());
             if (viewerFaction != null) {
@@ -339,6 +345,7 @@ public class DynmapManager {
                 if (plugin.ENEMY_SYSTEM_ENABLED && viewerFaction.isEnemy(faction.getNameKey())) return plugin.DYNMAP_COLOR_ENEMY_CLAIM;
             }
         }
+        // Fallback for non-related factions or if viewingPlayer is null
         return plugin.DYNMAP_COLOR_NEUTRAL_CLAIM;
     }
 
